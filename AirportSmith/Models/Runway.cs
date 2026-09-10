@@ -30,4 +30,16 @@ public class Runway
     public double? SecondaryLeftVasiAngleDeg { get; set; }
     public int? SecondaryRightVasiType { get; set; }
     public double? SecondaryRightVasiAngleDeg { get; set; }
+
+    // RUNWAY's six nested PAVEMENT sub-structures (PRIMARY_THRESHOLD/
+    // PRIMARY_BLASTPAD/PRIMARY_OVERRUN and their SECONDARY_ counterparts).
+    // Null means "not present" (the PAVEMENT struct's ENABLE field was 0),
+    // matching the VASI Type==0 "not installed" convention above — not a
+    // zero-length feature.
+    public RunwayPavementFeature? PrimaryThreshold { get; set; }
+    public RunwayPavementFeature? PrimaryBlastPad { get; set; }
+    public RunwayPavementFeature? PrimaryOverrun { get; set; }
+    public RunwayPavementFeature? SecondaryThreshold { get; set; }
+    public RunwayPavementFeature? SecondaryBlastPad { get; set; }
+    public RunwayPavementFeature? SecondaryOverrun { get; set; }
 }

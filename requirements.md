@@ -1,5 +1,15 @@
 # AirportSmith — Requirements
 
+## Reference material
+
+- **FAA AIM 2-3, Airport Marking Aids and Signs** —
+  https://www.faa.gov/air_traffic/publications/atpubs/aim/aim0203.html —
+  authoritative source for runway/taxiway marking colors, shapes, and
+  placement (threshold bars, displaced-threshold arrows, demarcation bars,
+  chevrons, etc.). Used to ground the Diagram tab's runway pavement-marking
+  rendering (see the v0.1+ Diagram epic below) — consult this before changing
+  how any airport marking is drawn.
+
 ## Background / research (2026-09-09)
 
 The core idea — take a default MSFS 2024 airport and produce an edited "new version" as an override add-on — is not fully solved end-to-end by existing tools today:
@@ -151,10 +161,57 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
 - Given an airport with runways is loaded, the Diagram tab renders each
   runway as a filled rectangle, sized and rotated per its heading/length/width,
   in a coordinate system anchored on the airport's own reference point (flat-
-  earth projection — accurate at airport scale, no geodesic library needed).
-  **Not yet confirmed against a live sim** (this machine cannot run
-  MSFS/SimConnect) — covered by `AirportDiagramProjectorTests` hand-calculated
-  coordinate assertions instead.
+  earth projection — accurate at airport scale, no geodesic library needed),
+  with its primary/secondary designation (e.g. "09L"/"27R") labelled in white
+  near each end, nudged inward from the exact threshold so it sits visibly on
+  the pavement (`RunwayShape.PrimaryLabelPosition`/`SecondaryLabelPosition`).
+  **Confirmed against a live sim (OIBK):** the primary threshold's physical
+  position was initially placed at the wrong end — `HeadingDeg` is the
+  heading of travel *from* the primary threshold (i.e. the direction you
+  roll after touching down there), so the primary threshold itself sits at
+  the *opposite* end from where that heading vector points, not the same
+  end. Fixed in `AirportDiagramProjector` (threshold1/threshold2 use
+  `-forward`/`+forward` respectively, not the reverse) after the user
+  reported OIBK's ~270°-heading runway showing its "27" label at the wrong
+  end.
+- Given a runway end has a displaced threshold (`RUNWAY.PRIMARY_THRESHOLD`/
+  `SECONDARY_THRESHOLD`), it renders per FAA AIM 2-3-3 (see the Reference
+  material link above) — entirely in WHITE, since this pavement is still
+  usable runway, just not for landing: a translucent white zone overlay
+  spanning from that end inward by the feature's `LENGTH`, a solid white
+  10ft-wide threshold bar at the displaced threshold itself, and a white
+  arrow along the centerline pointing at that bar (one arrow drawn, not
+  AIM's repeated arrowheads across the full width — a diagram-level
+  simplification). Given a runway end has a blast pad and/or overrun/stopway
+  (`PRIMARY_BLASTPAD`/`PRIMARY_OVERRUN` or their `SECONDARY_` equivalents),
+  each renders extra pavement extending OUTWARD beyond that threshold, sized
+  by the feature's own `LENGTH`/`WIDTH` (falling back to the runway's own
+  width if `WIDTH` is unset/zero): a solid yellow 3ft-wide demarcation bar at
+  the boundary with the runway, and yellow chevrons tiling it with a 90° tip
+  at each vertex and zero gap between chevrons — each one's arm-ends sit
+  exactly where the next chevron's tip begins, per the reference screenshot
+  the user provided. Chevron size is `featureHalfWidth * 0.85`, capped at the
+  feature's own `LENGTH` so a short extension gets a proportioned chevron
+  that fits within its own footprint rather than one sized off the width
+  alone and overflowing past the actual pavement. Chevrons repeat for the
+  extension's full `LENGTH` (fixed chevron depth × however many fit, not an
+  evenly-divided fixed count) — a bug where a low upper cap on chevron count
+  left the back portion of a long extension blank (reported against OIBK's
+  blast pads) is fixed by raising that cap to a 500-chevron safety ceiling
+  that only guards against corrupt/garbage `LENGTH` data, never real
+  pavement — both per AIM 2-3-3. The extension's
+  *background* fill is `SlateGray` — close to the runway's own
+  `DarkSlateGray` (same pavement family) but light enough to tell apart from
+  it at a glance — rather than AIM's own (also-yellow) background, per user
+  request, so the yellow demarcation bar/chevrons read as the "this pavement
+  is unusable" signal against a background that still reads as pavement.
+  A runway with none of these six pavement sub-structures present (`ENABLE`
+  was 0) renders exactly as before — no overlay/extension drawn.
+  **Not yet confirmed against a live sim** — see Known gaps below for the
+  interpretation this relies on (both blast pad and overrun are attached to,
+  and extend away from, the end they're named after — the standard apt.dat-
+  style convention, not independently re-derived from an MSFS-specific
+  diagram).
 - Given taxiway data with resolved `TAXI_POINT` coordinates, each
   `TaxiPathSegment` whose `Type` is `TaxiPathType.Taxi` or `.Path` (excludes
   `Runway`/`Parking`-typed path rows, avoiding double-drawing runway
@@ -209,6 +266,23 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
   view-layer mouse handling, so it lives in code-behind and is **not** covered
   by automated tests — verified manually per CLAUDE.md's testing policy. The
   diagram's shape data stays pure/testable in `AirportDiagramProjector`.
+- `RUNWAY.PRIMARY_THRESHOLD`/`PRIMARY_BLASTPAD`/`PRIMARY_OVERRUN` and their
+  `SECONDARY_` counterparts (`FacilityPavementData` in `SimConnectService`)
+  are **unconfirmed against a live sim** — `LENGTH`/`WIDTH` field
+  order/type (assumed `FLOAT32`) and `ENABLE`'s not-present convention
+  (assumed `0`, matching VASI's `TYPE==0`) are implemented per the SDK's
+  documented field list only, same risk category as the earlier FLOAT32
+  bugs. Additionally, **which end each feature attaches to is an assumption**:
+  blast pad and overrun are drawn extending outward from the specific end
+  they're named after (the standard convention X-Plane's `apt.dat` uses for
+  the equivalent per-end displaced-threshold/stopway/blastpad fields) — this
+  has not been checked against a real MSFS Facility Data diagram or SDK
+  illustration, only reasoned by analogy. If a live pull shows blast
+  pad/overrun pointing the wrong direction (mirroring the earlier
+  primary/secondary threshold bug), that's the first thing to re-check. The
+  marking *colors and sub-shapes* (white threshold bar/arrow, yellow
+  demarcation bar/chevrons) are grounded directly in FAA AIM 2-3-3, not a
+  guess — see the Reference material link at the top of this file.
 
 ## Proposed v0.1+ epics (not yet committed — for prioritization with the user)
 
@@ -240,8 +314,23 @@ These are draft candidates surfaced by the research above, not approved user sto
   policy.
 - `AppDataHelperTests.AppDataPath_UsesDevSuffix_InDebugBuilds` (`AirportSmith.Tests`) pins the dev/release AppData split guardrail from day one, matching the data-safety discipline established in `DestinationPlanner`.
 - `AirportDiagramProjectorTests` (`AirportSmith.Tests`) covers: a single
-  runway's thresholds and all 4 rotated-rectangle corners match hand-calculated
-  coordinates; multi-runway canvas bounds cover every runway; a `Taxi`-typed
+  runway's thresholds, all 4 rotated-rectangle corners, and both designation
+  label positions match hand-calculated coordinates, with all six pavement
+  extras (`PrimaryFeatures`/`SecondaryFeatures`) null when the runway has
+  none set; a runway with a `PrimaryThreshold` renders a
+  `RunwayThresholdMarkingShape` (zone overlay, threshold bar, arrow shaft and
+  head) matching hand-calculated coordinates; a runway with
+  `PrimaryBlastPad`/`PrimaryOverrun` (one with an explicit `WidthMeters`, one
+  at `0` to exercise the fallback-to-runway-width path, which also exercises
+  the length-cap since the fallback width alone would overflow a 15m-long
+  overrun) renders both as a `RunwayPavementExtensionShape` — footprint,
+  demarcation bar, and chevrons whose 90°-tip/zero-gap tiling is verified by
+  checking one chevron's arm-ends land exactly at the next chevron's vertex
+  — matching hand-calculated coordinates; a 68m-long blast pad needing 16
+  chevrons (past the old, buggy 10-chevron cap) has its last chevron's
+  arm-ends land exactly on the extension's own far edge, confirming full
+  coverage rather than truncation; multi-runway canvas bounds cover
+  every runway; a `Taxi`-typed
   segment with resolved coordinates and a name is included with `HasName=true`,
   its `WidthCorners` (the pavement-footprint band) and `MidPoint` (label
   position) matching hand-calculated coordinates (and `HasName=false` for an

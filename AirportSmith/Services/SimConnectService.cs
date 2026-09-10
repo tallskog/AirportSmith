@@ -89,6 +89,20 @@ public class SimConnectService : ISimConnectService
         public float Angle;
     }
 
+    // PAVEMENT: the six sub-structures RUNWAY nests for PRIMARY_THRESHOLD/
+    // PRIMARY_BLASTPAD/PRIMARY_OVERRUN and their SECONDARY_ counterparts, same
+    // nesting-by-name pattern as VASI. LENGTH/WIDTH are FLOAT32 per the SDK
+    // docs; ENABLE (INT32) is treated as a bool like VASI's TYPE==0 — see the
+    // PAVEMENT case in OnFacilityData for how a row is matched back to which
+    // of the six named slots it came from (PendingLookup.PavementSlotIndex,
+    // reset on each new RUNWAY row exactly like VasiSlotIndex).
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private struct FacilityPavementData
+    {
+        public float Length, Width;
+        public int Enable;
+    }
+
     // FREQUENCY: FREQUENCY is INT32 raw Hz (not FLOAT64 — this was the other
     // instance of the double/float-family bug). NAME is CHAR[64].
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -191,6 +205,11 @@ public class SimConnectService : ISimConnectService
         // the request order in RegisterFacilityDefinition. Reset whenever a new
         // RUNWAY row arrives.
         public int VasiSlotIndex;
+        // Same idea as VasiSlotIndex but for PAVEMENT rows — 0..5 map to
+        // primary threshold/blastpad/overrun then secondary threshold/blastpad/
+        // overrun, matching the request order in RegisterFacilityDefinition.
+        // Reset whenever a new RUNWAY row arrives.
+        public int PavementSlotIndex;
     }
 
     private PendingLookup? _pending;
@@ -303,6 +322,44 @@ public class SimConnectService : ISimConnectService
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SECONDARY_NUMBER");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SECONDARY_DESIGNATOR");
 
+        // Order here fixes the PavementSlotIndex mapping in OnFacilityData —
+        // same fragility as the VASI ordering comment below.
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_THRESHOLD");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_THRESHOLD");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_BLASTPAD");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_BLASTPAD");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_OVERRUN");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_OVERRUN");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_THRESHOLD");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_THRESHOLD");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_BLASTPAD");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_BLASTPAD");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_OVERRUN");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LENGTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ENABLE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_OVERRUN");
+
         // Order here fixes the VasiSlotIndex mapping in OnFacilityData — if the
         // sim doesn't deliver VASI rows in this exact request order, that
         // mapping needs to change (or a more reliable correlation found).
@@ -369,6 +426,7 @@ public class SimConnectService : ISimConnectService
         sc.RegisterFacilityDataDefineStruct<FacilityAirportData>(SIMCONNECT_FACILITY_DATA_TYPE.AIRPORT);
         sc.RegisterFacilityDataDefineStruct<FacilityRunwayData>(SIMCONNECT_FACILITY_DATA_TYPE.RUNWAY);
         sc.RegisterFacilityDataDefineStruct<FacilityVasiData>(SIMCONNECT_FACILITY_DATA_TYPE.VASI);
+        sc.RegisterFacilityDataDefineStruct<FacilityPavementData>(SIMCONNECT_FACILITY_DATA_TYPE.PAVEMENT);
         sc.RegisterFacilityDataDefineStruct<FacilityFrequencyData>(SIMCONNECT_FACILITY_DATA_TYPE.FREQUENCY);
         sc.RegisterFacilityDataDefineStruct<FacilityTaxiParkingData>(SIMCONNECT_FACILITY_DATA_TYPE.TAXI_PARKING);
         sc.RegisterFacilityDataDefineStruct<FacilityTaxiPathData>(SIMCONNECT_FACILITY_DATA_TYPE.TAXI_PATH);
@@ -474,6 +532,29 @@ public class SimConnectService : ISimConnectService
                     ElevationMeters = r.Altitude,
                 });
                 pending.VasiSlotIndex = 0;
+                pending.PavementSlotIndex = 0;
+                break;
+
+            case SIMCONNECT_FACILITY_DATA_TYPE.PAVEMENT:
+                if (pending.Details.Runways.Count == 0) break;
+                var pv = (FacilityPavementData)data.Data[0];
+                var runwayForPavement = pending.Details.Runways[^1];
+                // ENABLE==0 means "not present" here, same convention as
+                // VASI's TYPE==0 — LENGTH/WIDTH aren't meaningful in that case.
+                if (pv.Enable != 0)
+                {
+                    var feature = new RunwayPavementFeature(pv.Length, pv.Width);
+                    switch (pending.PavementSlotIndex)
+                    {
+                        case 0: runwayForPavement.PrimaryThreshold = feature; break;
+                        case 1: runwayForPavement.PrimaryBlastPad = feature; break;
+                        case 2: runwayForPavement.PrimaryOverrun = feature; break;
+                        case 3: runwayForPavement.SecondaryThreshold = feature; break;
+                        case 4: runwayForPavement.SecondaryBlastPad = feature; break;
+                        case 5: runwayForPavement.SecondaryOverrun = feature; break;
+                    }
+                }
+                pending.PavementSlotIndex++;
                 break;
 
             case SIMCONNECT_FACILITY_DATA_TYPE.VASI:

@@ -7,6 +7,47 @@
              MouseMove="OnMouseMove"
              LostMouseCapture="OnLostMouseCapture">
 
+    <!-- Per FAA AIM 2-3-3 (see requirements.md's reference list): a displaced
+         threshold's markings are WHITE (still usable runway pavement, just
+         not for landing); a blast pad/overrun's demarcation bar and chevrons
+         are YELLOW (pavement unusable for landing/takeoff/taxi) — its
+         background fill is SlateGray (lighter than the runway's
+         DarkSlateGray) per user request, so it reads as related pavement
+         while staying visually distinct from the runway itself, rather than
+         AIM's own (also-yellow) background. Shared as keyed templates since
+         each applies to both the primary and secondary end. -->
+    <UserControl.Resources>
+        <DataTemplate x:Key="RunwayThresholdMarkingTemplate">
+            <Canvas>
+                <Polygon Points="{Binding ZoneCorners, Converter={StaticResource Point2DListToPointCollection}}" Fill="#66FFFFFF"/>
+                <Polygon Points="{Binding ThresholdBar, Converter={StaticResource Point2DListToPointCollection}}" Fill="White"/>
+                <Line X1="{Binding ArrowShaftStart.X}" Y1="{Binding ArrowShaftStart.Y}" X2="{Binding ArrowShaftEnd.X}" Y2="{Binding ArrowShaftEnd.Y}" Stroke="White" StrokeThickness="2"/>
+                <Polygon Points="{Binding ArrowHead, Converter={StaticResource Point2DListToPointCollection}}" Fill="White"/>
+            </Canvas>
+        </DataTemplate>
+
+        <DataTemplate x:Key="RunwayExtensionTemplate">
+            <Canvas>
+                <!-- Background is SlateGray — close to the runway's own
+                     DarkSlateGray (same pavement family) but light enough to
+                     tell apart from it at a glance. The demarcation bar and
+                     chevrons still carry AIM 2-3-3's yellow. -->
+                <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="SlateGray"/>
+                <Polygon Points="{Binding DemarcationBar, Converter={StaticResource Point2DListToPointCollection}}" Fill="Yellow"/>
+                <ItemsControl ItemsSource="{Binding Chevrons}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Polyline Points="{Binding Converter={StaticResource Point2DListToPointCollection}}" Stroke="Yellow" StrokeThickness="2"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Canvas>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <!-- Border carries the background so empty space around the diagram is
          still hit-testable for pan/zoom, and clips the transformed canvas. -->
     <Border Background="White" ClipToBounds="True">
@@ -62,7 +103,29 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="DarkSlateGray"/>
+                        <Canvas>
+                            <!-- Blast pad / overrun: extra pavement extending outward beyond each
+                                 threshold. Drawn first (bottom layer) — a null feature (ContentControl
+                                 Content unset) simply renders nothing. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding PrimaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+
+                            <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="DarkSlateGray"/>
+
+                            <!-- Displaced threshold: a marking WITHIN the runway's own pavement,
+                                 drawn after (on top of) the runway polygon above. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
+
+                            <TextBlock Text="{Binding PrimaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
+                                       Canvas.Left="{Binding PrimaryLabelPosition.X}" Canvas.Top="{Binding PrimaryLabelPosition.Y}"
+                                       Margin="-12,-8,0,0"/>
+                            <TextBlock Text="{Binding SecondaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
+                                       Canvas.Left="{Binding SecondaryLabelPosition.X}" Canvas.Top="{Binding SecondaryLabelPosition.Y}"
+                                       Margin="-12,-8,0,0"/>
+                        </Canvas>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
