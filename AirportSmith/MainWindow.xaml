@@ -1,15 +1,72 @@
 <Window x:Class="AirportSmith.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:AirportSmith.Controls"
         Title="AirportSmith"
         Height="700" Width="1100"
         MinHeight="480" MinWidth="820"
         WindowStartupLocation="CenterScreen">
 
-    <Grid>
-        <TextBlock Text="AirportSmith — planning phase, no editing functionality yet."
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   FontSize="16"/>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <TextBlock Text="ICAO:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox Text="{Binding IcaoInput, UpdateSourceTrigger=PropertyChanged}" Width="80" VerticalContentAlignment="Center"/>
+            <Button Content="Load Airport" Command="{Binding LoadCommand}" Margin="10,0,0,0" Padding="10,2"/>
+            <TextBlock Text="Loading..." Margin="10,0,0,0" VerticalAlignment="Center"
+                       Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}"/>
+            <TextBlock Margin="20,0,0,0" VerticalAlignment="Center">
+                <Run Text="Sim: "/>
+                <Run Text="{Binding IsConnected, Mode=OneWay}"/>
+            </TextBlock>
+            <Button Content="Export Debug Data" Command="{Binding ExportDebugDataCommand}" Margin="20,0,0,0" Padding="10,2"
+                    Visibility="{Binding IsDevModeExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+            <Button Content="Load Debug Data File" Command="{Binding LoadFromFileCommand}" Margin="10,0,0,0" Padding="10,2"
+                    Visibility="{Binding IsDevModeImportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Text="{Binding LastExportPath, StringFormat='Saved to: {0}'}" Margin="0,4,0,0"
+                    Visibility="{Binding IsDevModeExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+
+        <TextBlock Grid.Row="2" Text="{Binding ErrorMessage}" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+        <TabControl Grid.Row="3" Margin="0,10,0,0" DataContext="{Binding Airport}">
+            <TabItem Header="Overview">
+                <StackPanel Margin="10">
+                    <TextBlock Text="{Binding Name}" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding Icao}"/>
+                    <TextBlock Margin="0,8,0,0">
+                        <Run Text="Lat/Lon: "/><Run Text="{Binding Latitude, Mode=OneWay}"/><Run Text=", "/><Run Text="{Binding Longitude, Mode=OneWay}"/>
+                    </TextBlock>
+                    <TextBlock><Run Text="Elevation (m): "/><Run Text="{Binding ElevationMeters, Mode=OneWay}"/></TextBlock>
+                    <TextBlock><Run Text="Magnetic variation (deg): "/><Run Text="{Binding MagneticVariationDeg, Mode=OneWay}"/></TextBlock>
+                </StackPanel>
+            </TabItem>
+            <TabItem Header="Runways">
+                <DataGrid ItemsSource="{Binding Runways}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
+            </TabItem>
+            <TabItem Header="Frequencies">
+                <DataGrid ItemsSource="{Binding Frequencies}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
+            </TabItem>
+            <TabItem Header="Parking">
+                <DataGrid ItemsSource="{Binding ParkingSpots}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
+            </TabItem>
+            <TabItem Header="Taxi Paths">
+                <DataGrid ItemsSource="{Binding TaxiPaths}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
+            </TabItem>
+            <TabItem Header="Jetways">
+                <DataGrid ItemsSource="{Binding Jetways}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
+            </TabItem>
+            <TabItem Header="Diagram">
+                <controls:AirportDiagramView Margin="10"
+                                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>
