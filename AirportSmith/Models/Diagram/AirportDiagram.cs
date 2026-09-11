@@ -33,15 +33,31 @@ public record RunwayPavementExtensionShape(
     IReadOnlyList<Point2D> DemarcationBar,
     IReadOnlyList<IReadOnlyList<Point2D>> Chevrons);
 
+// An approach lighting system at one runway end, from Runway.PrimaryApproachLights/
+// SecondaryApproachLights, per FAA AIM 2-1-3 (see requirements.md's
+// reference list) — a schematic simplification, not a literal light-by-light
+// reproduction: RailLights is a row of evenly-spaced dots extending outward
+// from the threshold along the extended centerline, length/spacing bucketed
+// by the system's category (see AirportDiagramProjector.Categorize) rather
+// than each of the SDK's 14 system types' exact real-world layout. CrossBar
+// is empty unless the category has one (ALSF-1/ALSF-2's defining red
+// side-row barrettes / decision bar ~1000ft out), in which case it holds
+// exactly the bar's two endpoints — same empty-list-means-absent convention
+// as RunwayPavementExtensionShape.Chevrons.
+public record ApproachLightSystemShape(
+    IReadOnlyList<Point2D> RailLights,
+    IReadOnlyList<Point2D> CrossBar);
+
 // One end's optional pavement extras, from Runway.PrimaryThreshold/BlastPad/
 // Overrun (or the Secondary equivalents) — each null when that
 // RunwayPavementFeature wasn't present (ENABLE was 0). ThresholdMarking sits
-// WITHIN the runway's own Corners; BlastPad/Overrun extend OUTWARD, beyond
-// the runway's edge, as their own separate pavement footprint.
+// WITHIN the runway's own Corners; BlastPad/Overrun/ApproachLights extend
+// OUTWARD, beyond the runway's edge.
 public record RunwayEndFeatures(
     RunwayThresholdMarkingShape? ThresholdMarking,
     RunwayPavementExtensionShape? BlastPad,
-    RunwayPavementExtensionShape? Overrun);
+    RunwayPavementExtensionShape? Overrun,
+    ApproachLightSystemShape? ApproachLights);
 
 // PrimaryLabelPosition/SecondaryLabelPosition are each threshold nudged
 // inward along the runway centerline, so the designation text sits visibly

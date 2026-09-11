@@ -103,6 +103,28 @@ public class SimConnectService : ISimConnectService
         public int Enable;
     }
 
+    // APPROACH_LIGHTS: the two sub-structures RUNWAY nests for
+    // PRIMARY_APPROACH_LIGHTS/SECONDARY_APPROACH_LIGHTS, same nesting-by-name
+    // pattern as VASI/PAVEMENT. Only SYSTEM is requested (not STROBE_COUNT/
+    // HAS_END_LIGHTS/HAS_REIL_LIGHTS/HAS_TOUCHDOWN_LIGHTS/ON_GROUND/OFFSET/
+    // SPACING/SLOPE, which this project doesn't use yet). Deliberately NOT
+    // requesting ENABLE: per the SDK's Facility Data reference, this
+    // struct's ENABLE means "whether the approach lights are [currently]
+    // enabled" — an operational/runtime flag — unlike PAVEMENT's ENABLE
+    // ("whether the pavement area is actually... present"), which is a
+    // structural existence flag. An earlier revision of this file treated
+    // the two as the same convention and gated presence on ENABLE!=0, which
+    // silently dropped every real SYSTEM value on a live sim (reported by
+    // the user as "no approach light data on any runway checked") — SYSTEM
+    // has an explicit 0=NONE value of its own (see OnFacilityData below),
+    // so it's used as the presence signal instead, the same way VASI's own
+    // TYPE==0 already is (VASI has no ENABLE field at all).
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private struct FacilityApproachLightsData
+    {
+        public int System;
+    }
+
     // FREQUENCY: FREQUENCY is INT32 raw Hz (not FLOAT64 — this was the other
     // instance of the double/float-family bug). NAME is CHAR[64].
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -210,6 +232,10 @@ public class SimConnectService : ISimConnectService
         // overrun, matching the request order in RegisterFacilityDefinition.
         // Reset whenever a new RUNWAY row arrives.
         public int PavementSlotIndex;
+        // Same idea again but for APPROACH_LIGHTS rows — 0/1 map to
+        // primary/secondary, matching the request order in
+        // RegisterFacilityDefinition. Reset whenever a new RUNWAY row arrives.
+        public int ApproachLightsSlotIndex;
     }
 
     private PendingLookup? _pending;
@@ -383,6 +409,16 @@ public class SimConnectService : ISimConnectService
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ANGLE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_RIGHT_VASI");
 
+        // Order here fixes the ApproachLightsSlotIndex mapping in
+        // OnFacilityData — same fragility as the VASI ordering comment above.
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_APPROACH_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SYSTEM");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_APPROACH_LIGHTS");
+
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_APPROACH_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SYSTEM");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_APPROACH_LIGHTS");
+
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE RUNWAY");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN FREQUENCY");
@@ -427,6 +463,7 @@ public class SimConnectService : ISimConnectService
         sc.RegisterFacilityDataDefineStruct<FacilityRunwayData>(SIMCONNECT_FACILITY_DATA_TYPE.RUNWAY);
         sc.RegisterFacilityDataDefineStruct<FacilityVasiData>(SIMCONNECT_FACILITY_DATA_TYPE.VASI);
         sc.RegisterFacilityDataDefineStruct<FacilityPavementData>(SIMCONNECT_FACILITY_DATA_TYPE.PAVEMENT);
+        sc.RegisterFacilityDataDefineStruct<FacilityApproachLightsData>(SIMCONNECT_FACILITY_DATA_TYPE.APPROACH_LIGHTS);
         sc.RegisterFacilityDataDefineStruct<FacilityFrequencyData>(SIMCONNECT_FACILITY_DATA_TYPE.FREQUENCY);
         sc.RegisterFacilityDataDefineStruct<FacilityTaxiParkingData>(SIMCONNECT_FACILITY_DATA_TYPE.TAXI_PARKING);
         sc.RegisterFacilityDataDefineStruct<FacilityTaxiPathData>(SIMCONNECT_FACILITY_DATA_TYPE.TAXI_PATH);
@@ -533,6 +570,7 @@ public class SimConnectService : ISimConnectService
                 });
                 pending.VasiSlotIndex = 0;
                 pending.PavementSlotIndex = 0;
+                pending.ApproachLightsSlotIndex = 0;
                 break;
 
             case SIMCONNECT_FACILITY_DATA_TYPE.PAVEMENT:
@@ -577,6 +615,26 @@ public class SimConnectService : ISimConnectService
                     }
                 }
                 pending.VasiSlotIndex++;
+                break;
+
+            case SIMCONNECT_FACILITY_DATA_TYPE.APPROACH_LIGHTS:
+                if (pending.Details.Runways.Count == 0) break;
+                var al = (FacilityApproachLightsData)data.Data[0];
+                var runwayForApproachLights = pending.Details.Runways[^1];
+                // SYSTEM==0 (NONE) means "not present" here, same convention
+                // as VASI's TYPE==0 — see FacilityApproachLightsData's
+                // comment for why ENABLE (used for PAVEMENT's own presence
+                // check) isn't the right signal for this struct.
+                if (al.System != 0)
+                {
+                    var lights = new ApproachLightSystem(al.System);
+                    switch (pending.ApproachLightsSlotIndex)
+                    {
+                        case 0: runwayForApproachLights.PrimaryApproachLights = lights; break;
+                        case 1: runwayForApproachLights.SecondaryApproachLights = lights; break;
+                    }
+                }
+                pending.ApproachLightsSlotIndex++;
                 break;
 
             case SIMCONNECT_FACILITY_DATA_TYPE.FREQUENCY:

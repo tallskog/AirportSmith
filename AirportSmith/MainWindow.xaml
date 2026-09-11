@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:AirportSmith.Controls"
+        xmlns:inspector="clr-namespace:AirportSmith.Models.Inspector"
         Title="AirportSmith"
         Height="700" Width="1100"
         MinHeight="480" MinWidth="820"
@@ -66,6 +67,20 @@
             <TabItem Header="Diagram">
                 <controls:AirportDiagramView Margin="10"
                                              DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            </TabItem>
+            <TabItem Header="Airport Data">
+                <!-- Raw, expandable dump of every field on the loaded AirportDetails
+                     (see AirportDataTreeBuilder) — a leaf's Children is empty, which
+                     WPF's TreeView already renders as a non-expandable row with no
+                     arrow, so leaves and composites need no separate styling. -->
+                <TreeView Margin="10"
+                          ItemsSource="{Binding DataContext.AirportDataTree, RelativeSource={RelativeSource AncestorType=Window}}">
+                    <TreeView.Resources>
+                        <HierarchicalDataTemplate DataType="{x:Type inspector:DataNode}" ItemsSource="{Binding Children}">
+                            <TextBlock Text="{Binding Text}"/>
+                        </HierarchicalDataTemplate>
+                    </TreeView.Resources>
+                </TreeView>
             </TabItem>
         </TabControl>
     </Grid>

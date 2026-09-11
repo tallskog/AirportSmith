@@ -27,6 +27,21 @@ public static class AirportDiagramProjector
     private const double CanvasMarginMeters = 50;
     private const double MinCanvasSpanMeters = 100;
 
+    // Approach-light-system length/spacing buckets, per FAA AIM 2-1-3's
+    // categorization of the SDK's 14 SYSTEM types — round meter
+    // approximations of the real ICAO/FAA standard lengths (~2400ft/1400ft/
+    // 1500ft), not exact conversions, since this is a diagram-level
+    // schematic (one simplified rail per category, not each type's literal
+    // light layout) in the same spirit as the chevron/threshold-arrow
+    // simplifications above.
+    private const double FullApproachLightsLengthMeters = 730;   // ALSF-1/ALSF-2/MALSR/SSALR/RAIL/CALVERT/CALVERT2 (~2400ft)
+    private const double ShortApproachLightsLengthMeters = 430;  // MALSF/SSALF/MALS/SALS/SALSF/SSALS (~1400ft)
+    private const double SparseApproachLightsLengthMeters = 465; // ODALS (~1500ft)
+    private const double ApproachLightsSpacingMeters = 30;       // full/short rail spacing (~100ft)
+    private const double SparseApproachLightsSpacingMeters = 92; // ODALS's wider single-light spacing (~300ft)
+    private const double RedCrossBarDistanceMeters = 300;        // ALSF-1/ALSF-2 red bar distance from threshold (~1000ft)
+    private const double RedCrossBarHalfWidthMeters = 15;
+
     // Raw local-meters coordinate in the flat-earth tangent plane, before
     // normalization to canvas space. Not the public Point2D (screen-space)
     // type — kept private so callers can't confuse the two coordinate spaces.
@@ -54,6 +69,13 @@ public static class AirportDiagramProjector
         LocalPoint[] DemarcationBar,
         LocalPoint[][] Chevrons);
 
+    // A category's schematic rail of light dots extending outward from the
+    // threshold, plus an optional red crossbar (empty when the category has
+    // none) — see Categorize below for which SYSTEM values map where.
+    private sealed record ApproachLightsWorking(
+        LocalPoint[] RailLights,
+        LocalPoint[] CrossBar);
+
     // Working data for one runway during projection, before the final
     // ToScreen pass.
     private sealed record RunwayWorkingData(
@@ -66,9 +88,27 @@ public static class AirportDiagramProjector
         ThresholdMarkingWorking? PrimaryThresholdMarking,
         ExtensionWorking? PrimaryBlastPad,
         ExtensionWorking? PrimaryOverrun,
+        ApproachLightsWorking? PrimaryApproachLights,
         ThresholdMarkingWorking? SecondaryThresholdMarking,
         ExtensionWorking? SecondaryBlastPad,
-        ExtensionWorking? SecondaryOverrun);
+        ExtensionWorking? SecondaryOverrun,
+        ApproachLightsWorking? SecondaryApproachLights);
+
+    // FAA AIM 2-1-3 categorizes approach light systems by length and
+    // whether they carry the red side-row barrettes ("decision bar") that
+    // distinguish ALSF-1/ALSF-2 — this buckets the SDK's 14 SYSTEM values
+    // into that categorization for the diagram's schematic rendering.
+    // SystemType 0 (NONE) and any unrecognized value fall through to None.
+    private enum ApproachLightCategory { None, Sparse, Short, Full, FullWithRedBar }
+
+    private static ApproachLightCategory Categorize(int systemType) => systemType switch
+    {
+        1 => ApproachLightCategory.Sparse,                        // ODALS
+        2 or 4 or 11 or 12 or 13 or 14 => ApproachLightCategory.Short, // MALSF/SSALF/MALS/SALS/SALSF/SSALS
+        6 or 7 => ApproachLightCategory.FullWithRedBar,           // ALSF-1/ALSF-2
+        3 or 5 or 8 or 9 or 10 => ApproachLightCategory.Full,     // MALSR/SSALR/RAIL/CALVERT/CALVERT2
+        _ => ApproachLightCategory.None,
+    };
 
     public static AirportDiagram Project(AirportDetails airport)
     {
@@ -215,14 +255,55 @@ public static class AirportDiagramProjector
                 return new ExtensionWorking(extCorners, demarcationBar, chevrons);
             }
 
+            // Approach lights sit OUTWARD from the threshold, along the
+            // extended centerline opposite the runway itself — the
+            // direction landing traffic approaches from, same "outward"
+            // direction Extension uses for blast pads/overruns.
+            ApproachLightsWorking? ApproachLights(ApproachLightSystem? feature, LocalPoint threshold, (double X, double Z) outwardDir)
+            {
+                if (feature is null) return null;
+                var category = Categorize(feature.SystemType);
+                if (category == ApproachLightCategory.None) return null;
+
+                var (length, spacing) = category switch
+                {
+                    ApproachLightCategory.Sparse => (SparseApproachLightsLengthMeters, SparseApproachLightsSpacingMeters),
+                    ApproachLightCategory.Short => (ShortApproachLightsLengthMeters, ApproachLightsSpacingMeters),
+                    _ => (FullApproachLightsLengthMeters, ApproachLightsSpacingMeters),
+                };
+
+                var lightCount = (int)(length / spacing) + 1;
+                var railLights = new LocalPoint[lightCount];
+                for (var i = 0; i < lightCount; i++)
+                {
+                    var dist = i * spacing;
+                    railLights[i] = new LocalPoint(threshold.X + outwardDir.X * dist, threshold.Z + outwardDir.Z * dist);
+                }
+
+                LocalPoint[] crossBar = [];
+                if (category == ApproachLightCategory.FullWithRedBar && length > RedCrossBarDistanceMeters)
+                {
+                    var barCenter = new LocalPoint(threshold.X + outwardDir.X * RedCrossBarDistanceMeters, threshold.Z + outwardDir.Z * RedCrossBarDistanceMeters);
+                    crossBar =
+                    [
+                        new LocalPoint(barCenter.X + right.X * RedCrossBarHalfWidthMeters, barCenter.Z + right.Z * RedCrossBarHalfWidthMeters),
+                        new LocalPoint(barCenter.X - right.X * RedCrossBarHalfWidthMeters, barCenter.Z - right.Z * RedCrossBarHalfWidthMeters),
+                    ];
+                }
+
+                return new ApproachLightsWorking(railLights, crossBar);
+            }
+
             runways.Add(new RunwayWorkingData(
                 runway, threshold1, threshold2, corners, primaryLabelPosition, secondaryLabelPosition,
                 PrimaryThresholdMarking: ThresholdMarking(runway.PrimaryThreshold, threshold1, forward),
                 PrimaryBlastPad: Extension(runway.PrimaryBlastPad, threshold1, (-forward.X, -forward.Z)),
                 PrimaryOverrun: Extension(runway.PrimaryOverrun, threshold1, (-forward.X, -forward.Z)),
+                PrimaryApproachLights: ApproachLights(runway.PrimaryApproachLights, threshold1, (-forward.X, -forward.Z)),
                 SecondaryThresholdMarking: ThresholdMarking(runway.SecondaryThreshold, threshold2, (-forward.X, -forward.Z)),
                 SecondaryBlastPad: Extension(runway.SecondaryBlastPad, threshold2, forward),
-                SecondaryOverrun: Extension(runway.SecondaryOverrun, threshold2, forward)));
+                SecondaryOverrun: Extension(runway.SecondaryOverrun, threshold2, forward),
+                SecondaryApproachLights: ApproachLights(runway.SecondaryApproachLights, threshold2, forward)));
         }
 
         var taxiways = new List<(TaxiPathSegment Segment, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)>();
@@ -292,6 +373,10 @@ public static class AirportDiagramProjector
             e.DemarcationBar.Select(ToScreen).ToList(),
             e.Chevrons.Select(c => (IReadOnlyList<Point2D>)c.Select(ToScreen).ToList()).ToList());
 
+        ApproachLightSystemShape? ToScreenApproachLights(ApproachLightsWorking? a) => a is null ? null : new ApproachLightSystemShape(
+            a.RailLights.Select(ToScreen).ToList(),
+            a.CrossBar.Select(ToScreen).ToList());
+
         return new AirportDiagram
         {
             CanvasWidth = (maxX - minX) + 2 * CanvasMarginMeters,
@@ -307,11 +392,13 @@ public static class AirportDiagramProjector
                 new RunwayEndFeatures(
                     ToScreenMarking(r.PrimaryThresholdMarking),
                     ToScreenExtension(r.PrimaryBlastPad),
-                    ToScreenExtension(r.PrimaryOverrun)),
+                    ToScreenExtension(r.PrimaryOverrun),
+                    ToScreenApproachLights(r.PrimaryApproachLights)),
                 new RunwayEndFeatures(
                     ToScreenMarking(r.SecondaryThresholdMarking),
                     ToScreenExtension(r.SecondaryBlastPad),
-                    ToScreenExtension(r.SecondaryOverrun)))).ToList(),
+                    ToScreenExtension(r.SecondaryOverrun),
+                    ToScreenApproachLights(r.SecondaryApproachLights)))).ToList(),
             TaxiwaySegments = taxiways.Select(t => new TaxiwaySegmentShape(
                 ToScreen(t.Start),
                 ToScreen(t.End),
@@ -352,15 +439,24 @@ public static class AirportDiagramProjector
                 points.AddRange(chevron);
         }
 
+        static void AddApproachLights(List<LocalPoint> points, ApproachLightsWorking? a)
+        {
+            if (a is null) return;
+            points.AddRange(a.RailLights);
+            points.AddRange(a.CrossBar);
+        }
+
         foreach (var r in runways)
         {
             points.AddRange(r.Corners);
             AddMarking(points, r.PrimaryThresholdMarking);
             AddExtension(points, r.PrimaryBlastPad);
             AddExtension(points, r.PrimaryOverrun);
+            AddApproachLights(points, r.PrimaryApproachLights);
             AddMarking(points, r.SecondaryThresholdMarking);
             AddExtension(points, r.SecondaryBlastPad);
             AddExtension(points, r.SecondaryOverrun);
+            AddApproachLights(points, r.SecondaryApproachLights);
         }
         foreach (var t in taxiways)
             points.AddRange(t.WidthCorners);

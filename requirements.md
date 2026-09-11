@@ -9,6 +9,12 @@
   chevrons, etc.). Used to ground the Diagram tab's runway pavement-marking
   rendering (see the v0.1+ Diagram epic below) — consult this before changing
   how any airport marking is drawn.
+- **FAA AIM 2-1, Airport Lighting Aids** —
+  https://www.faa.gov/air_traffic/publications/atpubs/aim/aim0201.html —
+  covers approach light system (ALS) types and their standard lengths/
+  layouts (AIM 2-1-3). Used to ground the Diagram tab's approach-lights
+  schematic (see the v0.1+ Diagram epic below) — consult this before changing
+  how approach lights are categorized or drawn.
 
 ## Background / research (2026-09-09)
 
@@ -19,27 +25,29 @@ The core idea — take a default MSFS 2024 airport and produce an edited "new ve
 - MSFS SDK Dev Mode's "Airport Archetype Overrides" only affect cosmetic ground-detail rendering (tire marks, cracks, stains) — not layout/runways/taxiways/parking. Not relevant to this project's core feature.
 - **SimConnect's Facility Data API** (`AddToFacilityDefinition` / `RequestFacilityData(_EX1)`) can pull live airport data (runways, taxi points/parking, jetways, tower position, frequencies) directly from a running sim session, including streamed airports, without touching BGL files. This is the recommended primary extraction strategy for AirportSmith: it works today, avoids the broken-decompiler problem, and reuses a pattern already proven in the sibling `DestinationPlanner` project's `SimConnectService`.
   - Known gap: Facility Data definitions have not been confirmed updated for some MSFS-2024-only additions (`TaxiwayServiceStand` objects, some new `TaxiwayParking` properties like passenger access type).
+  - **Confirmed hard gap (2026-09-10): taxiway signs cannot be read via SimConnect at all.** The `SIMCONNECT_FACILITY_DATA_TYPE` enum (the full set of sub-types requestable via `AddToFacilityDefinition`/`RequestFacilityData(_EX1)`) has no sign-related member — its 26 values run `AIRPORT`, `RUNWAY`, `START`, `FREQUENCY`, `HELIPAD`, `APPROACH` (+ transition/leg sub-types), `DEPARTURE`, `ARRIVAL`, `RUNWAY_TRANSITION`, `ENROUTE_TRANSITION`, `TAXI_POINT`, `TAXI_PARKING`, `TAXI_PATH`, `TAXI_NAME`, `JETWAY`, `VOR`, `NDB`, `WAYPOINT`, `ROUTE`, `PAVEMENT`, `APPROACH_LIGHTS`, `VASI` — confirmed against both the static SimConnect API reference and the current MSFS 2024 SDK site. The 2024 SDK site's own table of contents lists "TaxiwaySign Objects" only under **Scenery Editor Objects** (BGL/XML authoring), never under the SimConnect API Reference section — confirming taxiway signs are an authoring-only concept, unlike `TaxiwayServiceStand`/newer `TaxiwayParking` fields (which at least plausibly exist in Facility Data but are unconfirmed). Reading taxiway sign placement/text would require the BGL-decompilation path, which is itself currently broken for native 2024 airports (see above) — so taxiway signs are unreachable by either strategy for the foreseeable future.
 
 **Two possible extraction strategies and their coverage:**
-1. **SimConnect Facility Data (live, from a running sim)** — runways, taxiway/parking network, frequencies, navaids, tower. Works for streamed airports. Misses ground-poly/apron visuals, buildings/scenery objects, newest 2024-only parking fields.
+1. **SimConnect Facility Data (live, from a running sim)** — runways, taxiway/parking network, frequencies, navaids, tower. Works for streamed airports. Misses ground-poly/apron visuals, buildings/scenery objects, newest 2024-only parking fields, and taxiway signs entirely (no Facility Data type exists for them).
 2. **BGL/XML decompilation (ADE-style, offline)** — currently broken for native 2024 airport BGLs; only reliable via the 2020-data workaround.
 
-**Non-goals for v0.1** (explicitly out of scope until re-evaluated): ground/apron visual polygons, static scenery objects/buildings, and any 2024-only taxiway/parking fields not exposed via Facility Data.
+**Non-goals for v0.1** (explicitly out of scope until re-evaluated): ground/apron visual polygons, static scenery objects/buildings, taxiway signs (no extraction path exists via either strategy), and any 2024-only taxiway/parking fields not exposed via Facility Data.
 
 ## v0.1 — Extract & display airport data from a running sim (committed)
 
 **User story:** As a user, I can type an ICAO code, click a button, and see everything
 AirportSmith can read about that airport from a running MSFS 2024 session via
 SimConnect's Facility Data API — airport reference info, runways (including
-VASI/PAPI approach lights), frequencies, taxi parking spots, the taxiway path
-network, and jetways — so I can evaluate what's available before deciding what to
-edit in a future version.
+VASI/PAPI approach lights and approach light systems), frequencies, taxi parking
+spots, the taxiway path network, and jetways — so I can evaluate what's available
+before deciding what to edit in a future version.
 
 **Acceptance criteria:**
 - Given MSFS 2024 is running and the ICAO exists, clicking "Load Airport" displays:
   name, lat/lon, elevation, magnetic variation; a runway list (designation, heading,
-  length, width, surface, and VASI/PAPI type+angle for each of the four
-  primary/secondary × left/right slots when present); a frequency list (type,
+  length, width, surface, VASI/PAPI type+angle for each of the four
+  primary/secondary × left/right slots when present, and the approach light system
+  type for the primary/secondary ends when present); a frequency list (type,
   frequency, name); a taxi parking list (number, type, name/suffix codes, heading,
   radius); a taxi path list (type, width, start/end node indices, resolved name);
   and a jetway list when present at the airport. **Confirmed against a live MSFS
@@ -120,6 +128,60 @@ edit in a future version.
   "absent" and leaves the corresponding `Runway` properties `null`. Still
   unconfirmed: a runway that actually *has* a PAPI/VASI on at least one
   side/end, to verify the populated (non-zero) case looks sane too.
+- Approach light system data (`Runway.PrimaryApproachLights`/`SecondaryApproachLights`,
+  each an `ApproachLightSystem(SystemType)`) was added to support showing approach
+  lights on the diagram per user request, sourced from RUNWAY's two nested
+  `PRIMARY_APPROACH_LIGHTS`/`SECONDARY_APPROACH_LIGHTS` sub-structures (the SDK's
+  `APPROACH_LIGHTS` facility data type). Only `SYSTEM` is requested (not
+  `STROBE_COUNT`/`HAS_END_LIGHTS`/`HAS_REIL_LIGHTS`/`HAS_TOUCHDOWN_LIGHTS`/
+  `ON_GROUND`/`ENABLE`/`OFFSET`/`SPACING`/`SLOPE`, which this project doesn't use
+  yet). `SimConnectService` correlates each row back to primary/secondary the same
+  way it does for the VASI/PAVEMENT sub-structures — counting rows since the last
+  RUNWAY row arrived (`PendingLookup.ApproachLightsSlotIndex`).
+  - **Bug found and fixed (2026-09-11, live sim, user report):** the first
+    revision requested `SYSTEM` and `ENABLE`, gating presence on `ENABLE!=0` by
+    analogy with `PAVEMENT.ENABLE`. The user checked several airports/runways and
+    none showed approach light data at all. Re-checked directly against the local
+    MSFS 2024 SDK's own bundled docs (`...\Documentation\public\retail\
+    programming-apis\simconnect\api-reference\facilities\
+    simconnect_addtofacilitydefinition\index.md`, found via the user's own IDE
+    tab into `SimConnect.h`) rather than the earlier online mirror: `PAVEMENT`'s
+    `ENABLE` is documented as "whether the requested pavement area is actually...
+    present" (a structural existence flag), but `APPROACHLIGHTS`' own `ENABLE` is
+    documented as "whether the approach lights are enabled" — an
+    operational/runtime flag, not an install flag — so gating on it was silently
+    dropping every real `SYSTEM` value. Fixed: `ENABLE` is no longer requested at
+    all for this sub-structure; presence is now `SYSTEM!=0`, the same convention
+    already confirmed working for `VASI.TYPE==0` (which also has no `ENABLE`
+    field). Field names/order for both `RUNWAY.PRIMARY_APPROACH_LIGHTS`/
+    `SECONDARY_APPROACH_LIGHTS` and `APPROACHLIGHTS.SYSTEM`'s 15-value enum are
+    now confirmed directly against the local SDK docs, not just the earlier
+    online mirror. **Re-verified against a live sim (2026-09-11, EFHK):** the
+    fix works — the export shows real, non-`NONE` `SystemType` values (e.g.
+    `SystemType=9`/CALVERT on 15, `SystemType=10`/CALVERT2 on 22L/04R and
+    22R/04L), confirming `SYSTEM!=0` is the right presence signal.
+  - **Second bug found and fixed (2026-09-11, same EFHK data):** even with
+    real approach light data now populating `Runway.PrimaryApproachLights`/
+    `SecondaryApproachLights`, the Diagram tab still showed nothing visible.
+    Root cause was in the *rendering*, not the extraction: EFHK's own taxi/
+    parking data alone already spans roughly 4900m x 3100m (measured
+    directly from the export), and `AirportDiagramProjector`'s fit-to-view
+    scale is `min(ActualWidth/CanvasWidth, ActualHeight/CanvasHeight)` — at
+    that real-world scale (roughly 0.15x-0.2x for a typical window size), a
+    lone few-meter-wide dot shrinks below a device pixel and is invisible
+    regardless of its fill color, unlike a synthetic single-runway test
+    fixture where the canvas stays small enough for a several-meter dot to
+    still render at a few pixels. Fixed in `AirportDiagramView.xaml`'s
+    `ApproachLightsTemplate`: a connecting `Polyline` is now drawn through
+    the rail lights first (the same reason the thin taxiway centerlines stay
+    visible at any zoom — a line's length keeps it rendering even when its
+    stroke alone would be sub-pixel), with the individual dot markers (now
+    16m, up from 6m) drawn on top for detail once zoomed in on a specific
+    runway end; the red crossbar's stroke was also thickened (3 to 8) for
+    the same reason. XAML-only change — the underlying `RailLights`/
+    `CrossBar` coordinate data from `AirportDiagramProjector` was already
+    correct (confirmed by `AirportDiagramProjectorTests`), so no projector
+    or test changes were needed for this fix.
 - Jetway data comes from a different, older SimConnect API
   (`RequestJetwayData`/`OnRecvJetwayData`) than the rest of this feature (Facility
   Data), requires parking indices from the TAXI_PARKING results first, and its
@@ -223,6 +285,20 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
   MSFS's scenery for that taxiway. A segment with an unresolved index
   (missing `TAXI_POINT` row) is skipped, not drawn as a garbage line to the
   origin.
+- Given a runway end has an approach light system (`RUNWAY.PRIMARY_APPROACH_LIGHTS`/
+  `SECONDARY_APPROACH_LIGHTS`), it renders as a schematic per FAA AIM 2-1-3 (see the
+  Reference material link above) — not a literal light-by-light reproduction: a row
+  of evenly-spaced white dots extending outward from the threshold along the
+  extended centerline, whose length and spacing are bucketed by the system's
+  category (`AirportDiagramProjector.Categorize`, keyed off the SDK's raw `SYSTEM`
+  value) rather than each of the 14 SDK system types' exact real-world layout —
+  Sparse (ODALS: ~465m, ~92m spacing), Short (MALSF/SSALF/MALS/SALS/SALSF/SSALS:
+  ~430m, ~30m spacing), and Full (MALSR/SSALR/RAIL/CALVERT/CALVERT2 and
+  ALSF-1/ALSF-2: ~730m, ~30m spacing). ALSF-1/ALSF-2 additionally render a red
+  crossbar ~300m (~1000ft) out from the threshold, for their defining red side-row
+  barrettes / decision bar — every other category has none. `SYSTEM` value `0`
+  (`NONE`), an unrecognized value, or no `ApproachLightSystem` at all (`ENABLE` was
+  `0`) renders nothing, same as the other optional runway-end features.
 - Given parking spot data with `BIAS_X`/`BIAS_Z`, each spot renders as a
   circle (sized by `RadiusMeters`) with a short heading tick.
 - Given no airport is loaded, the Diagram tab is empty (no exception).
@@ -266,6 +342,14 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
   view-layer mouse handling, so it lives in code-behind and is **not** covered
   by automated tests — verified manually per CLAUDE.md's testing policy. The
   diagram's shape data stays pure/testable in `AirportDiagramProjector`.
+- The approach-lights schematic's length/spacing buckets and the ALSF-1/ALSF-2
+  red-crossbar distance are round-number approximations of the real ICAO/FAA
+  standard lengths (per FAA AIM 2-1-3), not exact conversions or a literal
+  reproduction of each of the SDK's 14 system types' real-world layout — a
+  diagram-level simplification in the same spirit as the fixed-count
+  chevron/single-arrow simplifications below. The underlying
+  `Runway.PrimaryApproachLights`/`SecondaryApproachLights` data itself is
+  unconfirmed against a live sim — see the v0.1 Known gaps above.
 - `RUNWAY.PRIMARY_THRESHOLD`/`PRIMARY_BLASTPAD`/`PRIMARY_OVERRUN` and their
   `SECONDARY_` counterparts (`FacilityPavementData` in `SimConnectService`)
   are **unconfirmed against a live sim** — `LENGTH`/`WIDTH` field
@@ -283,6 +367,76 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
   marking *colors and sub-shapes* (white threshold bar/arrow, yellow
   demarcation bar/chevrons) are grounded directly in FAA AIM 2-3-3, not a
   guess — see the Reference material link at the top of this file.
+
+## v0.1+ — Raw airport data inspector (Airport Data tab)
+
+**User story:** As a user, after loading an airport, I can open an "Airport Data"
+tab and see an expandable tree of literally everything AirportSmith extracted for
+it — every top-level field, every runway/frequency/parking spot/taxi
+path/jetway, and every nested sub-structure (a runway's VASI/PAPI, pavement
+extras, and approach light system) — so I can check exactly what data is (and
+isn't) present for a given airport without being limited to whatever columns a
+given tab's `DataGrid` happens to show, or wondering whether a field the Diagram
+tab depends on (e.g. an approach light system) is actually absent for that
+airport versus present but not rendering. Added per user request after an
+approach light system added nothing visible to a loaded airport's diagram and it
+wasn't obvious whether that airport simply had none.
+
+**Acceptance criteria:**
+- Given an airport is loaded (live from MSFS or via the Debug "Load Debug Data
+  File" feature), the Airport Data tab shows a tree with one root row per
+  top-level `AirportDetails` field/collection — scalar fields (`Icao`, `Name`,
+  `Latitude`, `Longitude`, `ElevationMeters`, `MagneticVariationDeg`) render as a
+  single non-expandable "Name: value" row; each collection (`Runways`,
+  `Frequencies`, `ParkingSpots`, `TaxiPaths`, `Jetways`) renders as an expandable
+  "Name (count)" row whose children are one row per item, labelled with a short,
+  type-specific summary (e.g. a runway's `"[1] 09L/27R"`, a taxi path's name or
+  `"(unnamed, type N)"` when blank) rather than a bare index.
+- Given an item has a nested optional sub-structure (e.g. a `Runway`'s
+  `PrimaryLeftVasiType`+`AngleDeg`, `PrimaryThreshold`/`BlastPad`/`Overrun`, or
+  `PrimaryApproachLights`/`SecondaryApproachLights`), it renders as its own
+  expandable row when present (its own properties as children, recursively) or a
+  single "Name: (not present)" row when the value is `null` — clicking the arrow
+  on any expandable row reveals its children, same interaction as expanding a
+  node in a browser's XML/JSON tree view.
+- The tree is generic/reflection-based (`AirportDataTreeBuilder`), not a
+  hand-maintained per-field dump — a new field added anywhere in
+  `AirportDetails`'s object graph appears in the tree automatically, without the
+  tab needing to be updated by hand (unlike the per-tab `DataGrid`s, which
+  already show most of this but only via `AutoGenerateColumns`' flat, one-row-
+  per-item view with no way to inspect a nested sub-structure).
+- Given a raw enum-backed `int` field that the SDK's own Facility Data
+  reference documents with a name-per-value list, its leaf row shows that name
+  alongside the number (e.g. `"SystemType: 9 (CALVERT)"`, `"Type: 6 (TOWER)"`)
+  rather than the bare number — covers `ApproachLightSystem.SystemType`,
+  `Runway`'s four VASI `*Type` fields, `Frequency.Type`, `TaxiParkingSpot.Type`/
+  `NameCode`/`SuffixCode`, and `TaxiPathSegment.Type`. Labels are transcribed
+  directly from the local MSFS 2024 SDK's own bundled docs (see the
+  `AirportDataTreeBuilder.EnumLabelsByField` comment for the exact path), not
+  guessed — a value with no matching entry (unrecognized, or a field with no
+  lookup at all) shows the plain number, never a fabricated label.
+  `Runway.SurfaceType` is deliberately excluded: the SDK's own docs promise a
+  value list for `RUNWAY.SURFACE`/`HELIPAD.SURFACE` and then give none (a real
+  gap in the SDK's own documentation, confirmed by reading both the rendered
+  HTML and the raw markdown source) — showing a value with no textual mapping
+  is honest; inventing one from unrelated enums (e.g. the aircraft's own
+  `SURFACE TYPE` SimVar, which uses different numeric codes) would not be.
+- Given no airport is loaded, the tab is empty (no exception).
+- `AirportDataTreeBuilder` is pure and unit-tested directly (see Test coverage
+  below) — no SimConnect/WPF dependency, matching `AirportDiagramProjector`'s
+  approach.
+
+**Known gaps carried forward (not blockers, monitor during manual testing):**
+- Number formatting for `double`/`float` leaves uses `CultureInfo.InvariantCulture`
+  (`"0.######"`) rather than the OS locale — deliberate, so the tab's output is
+  consistent and pasteable regardless of the machine it runs on, and so tests
+  don't depend on the runner's culture (this surfaced as a real test failure
+  during development on a comma-decimal locale before the fix).
+- The TreeView itself (`MainWindow.xaml`'s "Airport Data" tab) is view-layer WPF
+  rendering, so it isn't covered by automated tests — verified manually (the app
+  was smoke-tested to launch and stay responsive with the tab present, catching a
+  XAML parse/binding crash, which builds/`dotnet test` cannot) per CLAUDE.md's
+  testing policy. `AirportDataTreeBuilder`'s output itself is fully unit-tested.
 
 ## Proposed v0.1+ epics (not yet committed — for prioritization with the user)
 
@@ -304,9 +458,31 @@ These are draft candidates surfaced by the research above, not approved user sto
   store and sets `LastExportPath`; a new load clears the previous `LastExportPath`;
   `LoadFromFileCommand` correctly handles a cancelled dialog, an invalid file (sets
   an error, leaves `Airport` untouched), and a valid file (populates `Airport`,
-  clears `ErrorMessage`/`LastExportPath`). All via `Fakes/FakeSimConnectService`,
+  clears `ErrorMessage`/`LastExportPath`); a successful load and a valid
+  `LoadFromFileCommand` both populate `AirportDataTree` (non-empty); a
+  not-connected load and an invalid `LoadFromFileCommand` both leave it empty.
+  All via `Fakes/FakeSimConnectService`,
   `Fakes/FakeDebugDataStore`, and `Fakes/FakeFileDialogService` — no live
   SimConnect/MSFS dependency, no real file I/O, no WPF dialog.
+- `AirportDataTreeBuilderTests` (`AirportSmith.Tests`) covers: scalar fields
+  render as non-expandable `"Name: value"` leaves; a `null` nested record (e.g.
+  `Runway.PrimaryApproachLights` unset) renders as a `"Name: (not present)"` leaf
+  with no children; a present nested record expands into its own properties as
+  children; a list of runways renders as an expandable `"Runways (N)"` row whose
+  children are labelled with each runway's designations (`"[1] 09L/27R"`); an
+  empty list renders `"Name (0)"` with no children; a taxi path with a blank
+  `Name` falls back to `"[i] (unnamed, type N)"` rather than a blank label; a
+  present vs. absent nullable `double` field on the same object both render
+  correctly (`"Field: 12.5"` vs. `"Field: (not present)"`); `ApproachLightSystem
+  .SystemType` appends its documented label for a known value (`0`/NONE,
+  `9`/CALVERT) and falls back to the plain number for an unrecognized one
+  (`999`); `Runway.PrimaryLeftVasiType`, `Frequency.Type`,
+  `TaxiParkingSpot.Type`/`NameCode`/`SuffixCode` (including a `GATE_A`..`GATE_Z`
+  value), and `TaxiPathSegment.Type` each append their own documented label the
+  same way; `Runway.SurfaceType` deliberately shows the plain number with no
+  label (the SDK's own docs don't enumerate it). All pure
+  computation via reflection, no fakes needed — same testing approach as
+  `AirportDiagramProjectorTests`.
 - `SimConnectService`, `DebugDataStore` (the real file-writing/reading
   implementation), and `FileDialogService` (the real WPF dialog) are not covered by
   automated tests (the first requires a live SimConnect session/window handle; the
@@ -329,7 +505,16 @@ These are draft candidates surfaced by the research above, not approved user sto
   — matching hand-calculated coordinates; a 68m-long blast pad needing 16
   chevrons (past the old, buggy 10-chevron cap) has its last chevron's
   arm-ends land exactly on the extension's own far edge, confirming full
-  coverage rather than truncation; multi-runway canvas bounds cover
+  coverage rather than truncation; a runway with a `PrimaryApproachLights` of
+  `SystemType` 7 (ALSF-2) renders the Full category's rail-light count and
+  first/last positions plus the red crossbar's two endpoints, all matching
+  hand-calculated coordinates, with `SecondaryFeatures.ApproachLights` null;
+  `SystemType` 3 (MALSR) renders the same Full-category rail-light count with
+  an empty `CrossBar`; `SystemType` 11 (MALS) renders the Short category's
+  (fewer) rail-light count; `SystemType` 1 (ODALS) renders the Sparse
+  category's widely-spaced rail-light count; a runway with no
+  `PrimaryApproachLights` set and one with `SystemType` 0 (NONE) both produce
+  a null `ApproachLights` shape; multi-runway canvas bounds cover
   every runway; a `Taxi`-typed
   segment with resolved coordinates and a name is included with `HasName=true`,
   its `WidthCorners` (the pavement-footprint band) and `MidPoint` (label

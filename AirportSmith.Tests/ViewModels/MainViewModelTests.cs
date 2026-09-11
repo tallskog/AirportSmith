@@ -28,6 +28,7 @@ public class MainViewModelTests
 
         Assert.Same(airport, vm.Airport);
         Assert.NotNull(vm.Diagram);
+        Assert.NotEmpty(vm.AirportDataTree);
         Assert.Null(vm.ErrorMessage);
         Assert.False(vm.IsLoading);
     }
@@ -46,6 +47,7 @@ public class MainViewModelTests
 
         Assert.Null(vm.Airport);
         Assert.Null(vm.Diagram);
+        Assert.Empty(vm.AirportDataTree);
         Assert.Contains("not running", vm.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -246,6 +248,7 @@ public class MainViewModelTests
 
         Assert.Null(vm.Airport);
         Assert.Null(vm.Diagram);
+        Assert.Empty(vm.AirportDataTree);
         Assert.Contains("bad.json", vm.ErrorMessage);
     }
 
@@ -261,6 +264,7 @@ public class MainViewModelTests
 
         Assert.Same(airport, vm.Airport);
         Assert.NotNull(vm.Diagram);
+        Assert.NotEmpty(vm.AirportDataTree);
         Assert.Null(vm.ErrorMessage);
         Assert.Null(vm.LastExportPath);
         Assert.Equal("OIBK_x.json", store.LastImportedPath);

@@ -57,14 +57,17 @@ public class AirportDiagramProjectorTests
         Assert.Equal(100, runway.SecondaryLabelPosition.X, Precision);
         Assert.Equal(90, runway.SecondaryLabelPosition.Y, Precision);
 
-        // No PrimaryThreshold/BlastPad/Overrun (or Secondary equivalents) set
-        // on this fixture — ENABLE==0 in the real API, all should be absent.
+        // No PrimaryThreshold/BlastPad/Overrun/ApproachLights (or Secondary
+        // equivalents) set on this fixture — ENABLE==0 in the real API, all
+        // should be absent.
         Assert.Null(runway.PrimaryFeatures.ThresholdMarking);
         Assert.Null(runway.PrimaryFeatures.BlastPad);
         Assert.Null(runway.PrimaryFeatures.Overrun);
+        Assert.Null(runway.PrimaryFeatures.ApproachLights);
         Assert.Null(runway.SecondaryFeatures.ThresholdMarking);
         Assert.Null(runway.SecondaryFeatures.BlastPad);
         Assert.Null(runway.SecondaryFeatures.Overrun);
+        Assert.Null(runway.SecondaryFeatures.ApproachLights);
     }
 
     [Fact]
@@ -253,6 +256,135 @@ public class AirportDiagramProjectorTests
         var lastChevron = blastPad.Chevrons[^1];
         Assert.Equal(blastPad.Corners[1].Y, lastChevron[0].Y, Precision);
         Assert.Equal(blastPad.Corners[2].Y, lastChevron[2].Y, Precision);
+    }
+
+    [Fact]
+    public void Project_Runway_PrimaryApproachLights_Alsf2_RailAndRedCrossBar_MatchHandCalculatedCoordinates()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryApproachLights = new ApproachLightSystem(SystemType: 7), // ALSF-2
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        // Approach lights extend the canvas south of the runway itself
+        // (CanvasHeight grows from the base single-runway case's 1100 to
+        // cover the 730m-long rail); CanvasWidth is unaffected since the
+        // rail/crossbar stay within the runway's own X span.
+        Assert.Equal(200, diagram.CanvasWidth, Precision);
+        Assert.Equal(1820, diagram.CanvasHeight, Precision);
+
+        var runway = Assert.Single(diagram.Runways);
+        var lights = runway.PrimaryFeatures.ApproachLights;
+        Assert.NotNull(lights);
+
+        // Full-length (ALSF-2) category: 730m at 30m spacing = 25 rail
+        // lights, starting at the threshold itself and ending 720m out.
+        Assert.Equal(25, lights!.RailLights.Count);
+        Assert.Equal(100, lights.RailLights[0].X, Precision);
+        Assert.Equal(1050, lights.RailLights[0].Y, Precision);
+        Assert.Equal(100, lights.RailLights[24].X, Precision);
+        Assert.Equal(1770, lights.RailLights[24].Y, Precision);
+
+        // ALSF-1/ALSF-2's defining red side-row barrettes / decision bar,
+        // 300m (~1000ft) out from the threshold, spanning the crossbar's
+        // own half-width (15m) either side of the centerline.
+        Assert.Equal(2, lights.CrossBar.Count);
+        Assert.Equal(115, lights.CrossBar[0].X, Precision);
+        Assert.Equal(1350, lights.CrossBar[0].Y, Precision);
+        Assert.Equal(85, lights.CrossBar[1].X, Precision);
+        Assert.Equal(1350, lights.CrossBar[1].Y, Precision);
+
+        Assert.Null(runway.SecondaryFeatures.ApproachLights);
+    }
+
+    [Fact]
+    public void Project_Runway_PrimaryApproachLights_Malsr_FullCategoryWithoutRedCrossBar()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryApproachLights = new ApproachLightSystem(SystemType: 3), // MALSR
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        var lights = Assert.Single(diagram.Runways).PrimaryFeatures.ApproachLights;
+        Assert.NotNull(lights);
+        // Same Full-length rail as ALSF-2, but MALSR has no red side-row
+        // barrettes, so CrossBar stays empty.
+        Assert.Equal(25, lights!.RailLights.Count);
+        Assert.Empty(lights.CrossBar);
+    }
+
+    [Fact]
+    public void Project_Runway_PrimaryApproachLights_Mals_ShortCategory_FewerRailLightsThanFull()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryApproachLights = new ApproachLightSystem(SystemType: 11), // MALS
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        var lights = Assert.Single(diagram.Runways).PrimaryFeatures.ApproachLights;
+        Assert.NotNull(lights);
+        // Short category: 430m at 30m spacing = 15 rail lights.
+        Assert.Equal(15, lights!.RailLights.Count);
+        Assert.Empty(lights.CrossBar);
+    }
+
+    [Fact]
+    public void Project_Runway_PrimaryApproachLights_Odals_SparseCategory_WidelySpacedLights()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryApproachLights = new ApproachLightSystem(SystemType: 1), // ODALS
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        var lights = Assert.Single(diagram.Runways).PrimaryFeatures.ApproachLights;
+        Assert.NotNull(lights);
+        // Sparse category: 465m at 92m spacing = 6 lights.
+        Assert.Equal(6, lights!.RailLights.Count);
+        Assert.Empty(lights.CrossBar);
+    }
+
+    [Fact]
+    public void Project_Runway_ApproachLights_NullFeatureOrNoneSystemType_ProducesNoShape()
+    {
+        var airport = Airport(a =>
+        {
+            // No PrimaryApproachLights set at all (null).
+            a.Runways.Add(new Runway { Latitude = 0, Longitude = 0, HeadingDeg = 0, LengthMeters = 1000, WidthMeters = 100 });
+            // SystemType 0 == NONE, same as absent.
+            a.Runways.Add(new Runway { Latitude = 0, Longitude = 0.01, HeadingDeg = 0, LengthMeters = 1000, WidthMeters = 100, PrimaryApproachLights = new ApproachLightSystem(SystemType: 0) });
+        });
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.All(diagram.Runways, r => Assert.Null(r.PrimaryFeatures.ApproachLights));
     }
 
     [Fact]

@@ -46,6 +46,46 @@
                 </ItemsControl>
             </Canvas>
         </DataTemplate>
+
+        <!-- Per FAA AIM 2-1-3 (see requirements.md's reference list): a
+             schematic approach lighting system — a row of rail-light dots
+             extending outward from the threshold, plus (for ALSF-1/ALSF-2
+             only) a red crossbar for their defining red side-row barrettes /
+             decision bar. Real rail lights are white, but the diagram's own
+             background (Border Background="White" above) is also white, so
+             a white-filled dot is invisible regardless of stroke thickness —
+             Gold with a black outline instead, which stays visible against
+             the white background at any zoom level.
+
+             A real airport's own taxiway/parking layout can already span
+             several kilometers (confirmed against EFHK: ~4900m x 3100m from
+             taxi/parking data alone, before the ~730m the approach light
+             rail itself adds beyond each runway end) — at that scale,
+             fit-to-view shrinks a lone few-meter-wide dot below a device
+             pixel regardless of color, so a connecting Polyline is drawn
+             through the rail lights first (same reason the thin, long
+             taxiway centerlines above stay visible at any zoom — a line's
+             length keeps it rendering even when its stroke alone would be
+             sub-pixel) and the dots are drawn on top of it for detail once
+             zoomed in on a specific runway end. CrossBar is an empty point
+             list when absent, so its Polyline simply renders nothing. -->
+        <DataTemplate x:Key="ApproachLightsTemplate">
+            <Canvas>
+                <Polyline Points="{Binding RailLights, Converter={StaticResource Point2DListToPointCollection}}" Stroke="Gold" StrokeThickness="4"/>
+                <ItemsControl ItemsSource="{Binding RailLights}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Ellipse Width="16" Height="16" Fill="Gold" Stroke="Black" StrokeThickness="1"
+                                     Canvas.Left="{Binding X}" Canvas.Top="{Binding Y}" Margin="-8,-8,0,0"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Polyline Points="{Binding CrossBar, Converter={StaticResource Point2DListToPointCollection}}" Stroke="Red" StrokeThickness="8"/>
+            </Canvas>
+        </DataTemplate>
     </UserControl.Resources>
 
     <!-- Border carries the background so empty space around the diagram is
@@ -111,6 +151,11 @@
                             <ContentControl Content="{Binding PrimaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
                             <ContentControl Content="{Binding SecondaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
                             <ContentControl Content="{Binding SecondaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+
+                            <!-- Approach lights extend outward beyond the extensions above, so they
+                                 stay furthest from the runway itself and never get drawn over by them. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
 
                             <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="DarkSlateGray"/>
 

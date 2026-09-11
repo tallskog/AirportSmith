@@ -42,4 +42,14 @@ public class Runway
     public RunwayPavementFeature? SecondaryThreshold { get; set; }
     public RunwayPavementFeature? SecondaryBlastPad { get; set; }
     public RunwayPavementFeature? SecondaryOverrun { get; set; }
+
+    // RUNWAY's two nested APPROACH_LIGHTS sub-structures (PRIMARY_APPROACH_LIGHTS/
+    // SECONDARY_APPROACH_LIGHTS). Null means "not present" (the structure's
+    // SYSTEM field was 0/NONE), matching the VASI Type==0 convention above —
+    // NOT the structure's own ENABLE field, which (per the SDK's Facility
+    // Data reference) means "are the lights currently enabled", an
+    // operational flag distinct from whether the system is installed at
+    // all — see SimConnectService.FacilityApproachLightsData's comment.
+    public ApproachLightSystem? PrimaryApproachLights { get; set; }
+    public ApproachLightSystem? SecondaryApproachLights { get; set; }
 }

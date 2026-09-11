@@ -1,6 +1,7 @@
 using AirportSmith.Helpers;
 using AirportSmith.Models;
 using AirportSmith.Models.Diagram;
+using AirportSmith.Models.Inspector;
 using AirportSmith.Services;
 
 namespace AirportSmith.ViewModels;
@@ -16,6 +17,7 @@ public class MainViewModel : ViewModelBase
     private string? _errorMessage;
     private AirportDetails? _airport;
     private AirportDiagram? _diagram;
+    private IReadOnlyList<DataNode> _airportDataTree = [];
     private string? _lastExportPath;
 
     public string IcaoInput
@@ -50,6 +52,16 @@ public class MainViewModel : ViewModelBase
     {
         get => _diagram;
         private set => SetField(ref _diagram, value);
+    }
+
+    // Raw, expandable dump of everything on the loaded AirportDetails (see
+    // AirportDataTreeBuilder) — backs the "Airport Data" tab, so the user
+    // can check exactly what data is/isn't present without relying on the
+    // per-tab DataGrids staying in sync with every model field added.
+    public IReadOnlyList<DataNode> AirportDataTree
+    {
+        get => _airportDataTree;
+        private set => SetField(ref _airportDataTree, value);
     }
 
     public string? LastExportPath
@@ -97,6 +109,7 @@ public class MainViewModel : ViewModelBase
             var result = await _simConnect.GetAirportDetailsAsync(IcaoInput);
             Airport = result.Status == AirportLookupStatus.Success ? result.Airport : null;
             Diagram = Airport != null ? AirportDiagramProjector.Project(Airport) : null;
+            AirportDataTree = Airport != null ? AirportDataTreeBuilder.Build(Airport) : [];
             ErrorMessage = result.Status switch
             {
                 AirportLookupStatus.Success => null,
@@ -139,6 +152,7 @@ public class MainViewModel : ViewModelBase
 
         Airport = airport;
         Diagram = AirportDiagramProjector.Project(airport);
+        AirportDataTree = AirportDataTreeBuilder.Build(airport);
         ErrorMessage = null;
         LastExportPath = null;
         ExportDebugDataCommand.RaiseCanExecuteChanged();
