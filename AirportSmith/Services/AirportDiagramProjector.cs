@@ -80,6 +80,7 @@ public static class AirportDiagramProjector
     // ToScreen pass.
     private sealed record RunwayWorkingData(
         Runway Runway,
+        int SourceIndex,
         LocalPoint Threshold1,
         LocalPoint Threshold2,
         LocalPoint[] Corners,
@@ -101,12 +102,16 @@ public static class AirportDiagramProjector
     // SystemType 0 (NONE) and any unrecognized value fall through to None.
     private enum ApproachLightCategory { None, Sparse, Short, Full, FullWithRedBar }
 
-    private static ApproachLightCategory Categorize(int systemType) => systemType switch
+    private static ApproachLightCategory Categorize(ApproachLightSystemType systemType) => systemType switch
     {
-        1 => ApproachLightCategory.Sparse,                        // ODALS
-        2 or 4 or 11 or 12 or 13 or 14 => ApproachLightCategory.Short, // MALSF/SSALF/MALS/SALS/SALSF/SSALS
-        6 or 7 => ApproachLightCategory.FullWithRedBar,           // ALSF-1/ALSF-2
-        3 or 5 or 8 or 9 or 10 => ApproachLightCategory.Full,     // MALSR/SSALR/RAIL/CALVERT/CALVERT2
+        ApproachLightSystemType.Odals => ApproachLightCategory.Sparse,
+        ApproachLightSystemType.Malsf or ApproachLightSystemType.Ssalf or ApproachLightSystemType.Mals
+            or ApproachLightSystemType.Sals or ApproachLightSystemType.Salsf or ApproachLightSystemType.Ssals
+            => ApproachLightCategory.Short,
+        ApproachLightSystemType.Alsf1 or ApproachLightSystemType.Alsf2 => ApproachLightCategory.FullWithRedBar,
+        ApproachLightSystemType.Malsr or ApproachLightSystemType.Ssalr or ApproachLightSystemType.Rail
+            or ApproachLightSystemType.Calvert or ApproachLightSystemType.Calvert2
+            => ApproachLightCategory.Full,
         _ => ApproachLightCategory.None,
     };
 
@@ -132,8 +137,9 @@ public static class AirportDiagramProjector
         ];
 
         var runways = new List<RunwayWorkingData>();
-        foreach (var runway in airport.Runways)
+        for (var runwaySourceIndex = 0; runwaySourceIndex < airport.Runways.Count; runwaySourceIndex++)
         {
+            var runway = airport.Runways[runwaySourceIndex];
             var center = ProjectLatLon(runway.Latitude, runway.Longitude);
             var headingRad = DegToRad(runway.HeadingDeg);
             var forward = (X: Math.Sin(headingRad), Z: Math.Cos(headingRad));
@@ -295,7 +301,7 @@ public static class AirportDiagramProjector
             }
 
             runways.Add(new RunwayWorkingData(
-                runway, threshold1, threshold2, corners, primaryLabelPosition, secondaryLabelPosition,
+                runway, runwaySourceIndex, threshold1, threshold2, corners, primaryLabelPosition, secondaryLabelPosition,
                 PrimaryThresholdMarking: ThresholdMarking(runway.PrimaryThreshold, threshold1, forward),
                 PrimaryBlastPad: Extension(runway.PrimaryBlastPad, threshold1, (-forward.X, -forward.Z)),
                 PrimaryOverrun: Extension(runway.PrimaryOverrun, threshold1, (-forward.X, -forward.Z)),
@@ -306,9 +312,10 @@ public static class AirportDiagramProjector
                 SecondaryApproachLights: ApproachLights(runway.SecondaryApproachLights, threshold2, forward)));
         }
 
-        var taxiways = new List<(TaxiPathSegment Segment, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)>();
-        foreach (var segment in airport.TaxiPaths)
+        var taxiways = new List<(TaxiPathSegment Segment, int SourceIndex, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)>();
+        for (var sourceIndex = 0; sourceIndex < airport.TaxiPaths.Count; sourceIndex++)
         {
+            var segment = airport.TaxiPaths[sourceIndex];
             var type = (TaxiPathType)segment.Type;
             if (type is not (TaxiPathType.Taxi or TaxiPathType.Path))
                 continue;
@@ -339,7 +346,7 @@ public static class AirportDiagramProjector
                 new LocalPoint(start.X - perpX * halfWidth, start.Z - perpZ * halfWidth),
             };
 
-            taxiways.Add((segment, start, end, widthCorners, midPoint));
+            taxiways.Add((segment, sourceIndex, start, end, widthCorners, midPoint));
         }
 
         var parkingSpots = new List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)>();
@@ -381,31 +388,41 @@ public static class AirportDiagramProjector
         {
             CanvasWidth = (maxX - minX) + 2 * CanvasMarginMeters,
             CanvasHeight = (maxZ - minZ) + 2 * CanvasMarginMeters,
-            Runways = runways.Select(r => new RunwayShape(
-                r.Runway.PrimaryDesignation,
-                r.Runway.SecondaryDesignation,
-                ToScreen(r.Threshold1),
-                ToScreen(r.Threshold2),
-                r.Corners.Select(ToScreen).ToList(),
-                ToScreen(r.PrimaryLabelPosition),
-                ToScreen(r.SecondaryLabelPosition),
-                new RunwayEndFeatures(
+            Runways = runways.Select(r => new RunwayShape
+            {
+                PrimaryDesignation = r.Runway.PrimaryDesignation,
+                SecondaryDesignation = r.Runway.SecondaryDesignation,
+                Threshold1 = ToScreen(r.Threshold1),
+                Threshold2 = ToScreen(r.Threshold2),
+                Corners = r.Corners.Select(ToScreen).ToList(),
+                PrimaryLabelPosition = ToScreen(r.PrimaryLabelPosition),
+                SecondaryLabelPosition = ToScreen(r.SecondaryLabelPosition),
+                PrimaryFeatures = new RunwayEndFeatures(
                     ToScreenMarking(r.PrimaryThresholdMarking),
                     ToScreenExtension(r.PrimaryBlastPad),
                     ToScreenExtension(r.PrimaryOverrun),
                     ToScreenApproachLights(r.PrimaryApproachLights)),
-                new RunwayEndFeatures(
+                SecondaryFeatures = new RunwayEndFeatures(
                     ToScreenMarking(r.SecondaryThresholdMarking),
                     ToScreenExtension(r.SecondaryBlastPad),
                     ToScreenExtension(r.SecondaryOverrun),
-                    ToScreenApproachLights(r.SecondaryApproachLights)))).ToList(),
-            TaxiwaySegments = taxiways.Select(t => new TaxiwaySegmentShape(
-                ToScreen(t.Start),
-                ToScreen(t.End),
-                !string.IsNullOrWhiteSpace(t.Segment.Name),
-                t.Segment.Name,
-                t.WidthCorners.Select(ToScreen).ToList(),
-                ToScreen(t.MidPoint))).ToList(),
+                    ToScreenApproachLights(r.SecondaryApproachLights)),
+                SourceIndex = r.SourceIndex,
+            }).ToList(),
+            TaxiwaySegments = taxiways.Select(t =>
+            {
+                var name = ResolveTaxiName(airport, t.Segment.TaxiNameId);
+                return new TaxiwaySegmentShape
+                {
+                    Start = ToScreen(t.Start),
+                    End = ToScreen(t.End),
+                    HasName = !string.IsNullOrWhiteSpace(name),
+                    Name = name,
+                    WidthCorners = t.WidthCorners.Select(ToScreen).ToList(),
+                    MidPoint = ToScreen(t.MidPoint),
+                    SourceIndex = t.SourceIndex,
+                };
+            }).ToList(),
             ParkingSpots = parkingSpots.Select(p => new ParkingSpotShape(
                 ToScreen(p.Center),
                 p.Spot.RadiusMeters,
@@ -413,9 +430,18 @@ public static class AirportDiagramProjector
         };
     }
 
+    // TaxiPathSegment only carries a TaxiNameId (a reference into
+    // AirportDetails.TaxiNames, itself keyed by a stable Guid rather than
+    // array position so renaming/deleting a name never silently misaligns
+    // other segments' references) — resolving it to the actual display
+    // string needs the parent AirportDetails, unlike this project's other
+    // enum-backed fields that render fine on their own.
+    private static string ResolveTaxiName(AirportDetails airport, Guid? taxiNameId) =>
+        taxiNameId is { } id ? airport.TaxiNames.FirstOrDefault(n => n.Id == id)?.Value ?? string.Empty : string.Empty;
+
     private static (double MinX, double MaxX, double MinZ, double MaxZ) ComputeBounds(
         List<RunwayWorkingData> runways,
-        List<(TaxiPathSegment Segment, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)> taxiways,
+        List<(TaxiPathSegment Segment, int SourceIndex, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)> taxiways,
         List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)> parkingSpots)
     {
         var points = new List<LocalPoint>();

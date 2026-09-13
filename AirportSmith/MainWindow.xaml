@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:AirportSmith.Controls"
         xmlns:inspector="clr-namespace:AirportSmith.Models.Inspector"
+        xmlns:helpers="clr-namespace:AirportSmith.Helpers"
         Title="AirportSmith"
         Height="700" Width="1100"
         MinHeight="480" MinWidth="820"
@@ -30,6 +31,8 @@
                     Visibility="{Binding IsDevModeExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
             <Button Content="Load Debug Data File" Command="{Binding LoadFromFileCommand}" Margin="10,0,0,0" Padding="10,2"
                     Visibility="{Binding IsDevModeImportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+            <Button Content="Load Project" Command="{Binding LoadProjectCommand}" Margin="20,0,0,0" Padding="10,2"
+                    Visibility="{Binding IsProjectStoreAvailable, Converter={StaticResource BoolToVisibility}}"/>
         </StackPanel>
 
         <TextBlock Grid.Row="1" Text="{Binding LastExportPath, StringFormat='Saved to: {0}'}" Margin="0,4,0,0"
@@ -81,6 +84,255 @@
                         </HierarchicalDataTemplate>
                     </TreeView.Resources>
                 </TreeView>
+            </TabItem>
+            <TabItem Header="Edit">
+                <!-- Taxi path naming/lighting and runway lighting (edge lights,
+                     VASI/PAPI, approach lights) editing, backed by
+                     MainViewModel.TaxiPathEdits/RunwayEdits — see
+                     TaxiPathEditViewModel/RunwayEditViewModel. Edits write straight
+                     into the loaded Airport; Save Project persists it via
+                     IAirportProjectStore. The diagram on the right (a second,
+                     independent AirportDiagramView instance — see its own
+                     TaxiwayClickCommand doc comment) gives spatial context for
+                     which taxi path is which and drives the batch-edit popover:
+                     click one or more taxiways there (Ctrl+click to extend the
+                     selection) to edit their name/lighting together. -->
+                <Grid Margin="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="520"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button Content="Save Project"
+                                        Command="{Binding DataContext.SaveProjectCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Padding="10,2"
+                                        Visibility="{Binding DataContext.IsProjectStoreAvailable, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"/>
+                                <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
+                                           Text="{Binding DataContext.LastProjectSavePath, RelativeSource={RelativeSource AncestorType=Window}, StringFormat='Saved to: {0}'}"/>
+                            </StackPanel>
+
+                            <!-- The shared, user-managed name list every taxi path's Name
+                                 picker (below) draws from — see TaxiName.cs/TaxiNameEditViewModel.
+                                 Renaming here is instantly reflected wherever that name is used
+                                 (the diagram, the picker below) since both resolve it live by Id. -->
+                            <TextBlock Text="Taxi Names" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <DataGrid Margin="0,0,0,4" MaxHeight="140" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      ItemsSource="{Binding DataContext.TaxiNames, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <DataGrid.Columns>
+                                    <!-- A blank Value is a real, often heavily-shared sim entry (e.g.
+                                         paths to parking) — CellTemplate shows "(no name)" in gray
+                                         italics instead of a blank cell so it doesn't look like empty/
+                                         junk data, per user feedback after a blank entry was renamed
+                                         without realizing how many paths pointed at it. Still directly
+                                         editable (CellEditingTemplate) — double-click to give it a real
+                                         name if that's actually wanted. -->
+                                    <DataGridTemplateColumn Header="Name" Width="*">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding DisplayValue}" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsUnnamed}" Value="True">
+                                                                    <Setter Property="FontStyle" Value="Italic"/>
+                                                                    <Setter Property="Foreground" Value="Gray"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Width="60">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="Delete" Padding="6,1"
+                                                        Command="{Binding DataContext.DeleteTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Button Content="Add Name" HorizontalAlignment="Left" Margin="0,0,0,14" Padding="10,2"
+                                    Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+                            <TextBlock Text="Taxi Paths" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <!-- Selecting one or more rows here highlights the matching taxiway(s)
+                                 in the diagram for spatial context — see SelectionChanged's
+                                 code-behind handler and MainViewModel.SyncTaxiwaySelectionFromRows.
+                                 Deliberately doesn't open the batch-edit popover (that's reserved for
+                                 selecting via the diagram itself — see ShowTaxiwayBatchEditPopover). -->
+                            <DataGrid x:Name="TaxiPathsGrid" Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TaxiPathsGrid_SelectionChanged"
+                                      ItemsSource="{Binding DataContext.TaxiPathEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <DataGrid.Columns>
+                                    <!-- DataGridCheckBoxColumn's rendered checkbox isn't interactive
+                                         until its cell becomes "current" (selected) — a well-known WPF
+                                         quirk that makes every checkbox need a first click just to
+                                         select the cell and a second to actually toggle it. A real
+                                         CheckBox in a DataGridTemplateColumn's CellTemplate is always
+                                         interactive, so it toggles on the first click. -->
+                                    <DataGridTemplateColumn Header="Hide from Diagram" Width="120">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" IsChecked="{Binding IsHiddenFromDiagram, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Name" Width="150">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding DataContext.TaxiNames, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          DisplayMemberPath="DisplayValue" SelectedValuePath="Id"
+                                                          SelectedValue="{Binding TaxiNameId, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Left Edge Lighted" Width="120">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" IsChecked="{Binding LeftEdgeLighted, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Right Edge Lighted" Width="120">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" IsChecked="{Binding RightEdgeLighted, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                    <TextBlock Text="Runways" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <DataGrid AutoGenerateColumns="False" CanUserAddRows="False"
+                              ItemsSource="{Binding DataContext.RunwayEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Hide from Diagram" Width="120">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox HorizontalAlignment="Center" IsChecked="{Binding IsHiddenFromDiagram, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Primary" Width="55" IsReadOnly="True" Binding="{Binding PrimaryDesignation}"/>
+                            <DataGridTextColumn Header="Secondary" Width="65" IsReadOnly="True" Binding="{Binding SecondaryDesignation}"/>
+                            <DataGridTemplateColumn Header="Edge Lights" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.RunwayLightIntensities}"
+                                                  SelectedItem="{Binding EdgeLightIntensity, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Pri L VASI" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                                  SelectedItem="{Binding PrimaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Pri L Angle" Width="70" Binding="{Binding PrimaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Pri R VASI" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                                  SelectedItem="{Binding PrimaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Pri R Angle" Width="70" Binding="{Binding PrimaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Sec L VASI" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                                  SelectedItem="{Binding SecondaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Sec L Angle" Width="70" Binding="{Binding SecondaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Sec R VASI" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                                  SelectedItem="{Binding SecondaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Sec R Angle" Width="70" Binding="{Binding SecondaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Pri Approach Lights" Width="130">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypes}"
+                                                  SelectedItem="{Binding PrimarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Sec Approach Lights" Width="130">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypes}"
+                                                  SelectedItem="{Binding SecondarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Grid Grid.Column="1" x:Name="EditDiagramHost">
+                        <controls:AirportDiagramView
+                            DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+                        <!-- Batch-edit popover for the diagram's multi-select — DataContext is
+                             bound directly on the Popup element itself (not inside its Child),
+                             since a Popup's rendered content sits outside the normal visual tree
+                             once open, which breaks RelativeSource/FindAncestor lookups from
+                             within it; plain {Binding ...} inside the Child still works because
+                             DataContext inheritance (unlike RelativeSource) does flow into Popup
+                             content. -->
+                        <Popup DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                               IsOpen="{Binding ShowTaxiwayBatchEditPopover, Mode=OneWay}"
+                               PlacementTarget="{Binding ElementName=EditDiagramHost}"
+                               Placement="Center" StaysOpen="True" AllowsTransparency="True">
+                            <Border Background="White" BorderBrush="Gray" BorderThickness="1" Padding="12" CornerRadius="4">
+                                <StackPanel Width="220">
+                                    <TextBlock Margin="0,0,0,8" FontWeight="Bold">
+                                        <Run Text="Editing "/><Run Text="{Binding SelectedTaxiwayCount, Mode=OneWay}"/><Run Text=" taxi path(s)"/>
+                                    </TextBlock>
+                                    <!-- Blank/indeterminate means "leave unchanged" — Apply only
+                                         touches a field the user actually interacted with here (see
+                                         TaxiwayBatchEditViewModel/MainViewModel.ApplyTaxiwayBatchEdit),
+                                         so selecting paths that don't already agree on a field never
+                                         silently overwrites it. -->
+                                    <TextBlock Text="Name (leave blank to keep each path's own)" Margin="0,0,0,2" TextWrapping="Wrap" FontSize="11"/>
+                                    <ComboBox Margin="0,0,0,8" ItemsSource="{Binding TaxiNames}" DisplayMemberPath="DisplayValue" SelectedValuePath="Id"
+                                              SelectedValue="{Binding TaxiwayBatchEdit.TaxiNameId, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="Left Edge Lighted" Margin="0,0,0,4" IsThreeState="True" IsChecked="{Binding TaxiwayBatchEdit.LeftEdgeLighted}"/>
+                                    <CheckBox Content="Right Edge Lighted" Margin="0,0,0,10" IsThreeState="True" IsChecked="{Binding TaxiwayBatchEdit.RightEdgeLighted}"/>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button Content="Cancel" Margin="0,0,6,0" Padding="10,2" Command="{Binding CloseTaxiwayBatchEditCommand}"/>
+                                        <Button Content="Apply" Padding="10,2" Command="{Binding ApplyTaxiwayBatchEditCommand}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </Grid>
             </TabItem>
         </TabControl>
     </Grid>

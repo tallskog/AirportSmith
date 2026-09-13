@@ -15,4 +15,8 @@ public class AirportDetails
     public List<TaxiParkingSpot> ParkingSpots { get; set; } = [];
     public List<TaxiPathSegment> TaxiPaths { get; set; } = [];
     public List<Jetway> Jetways { get; set; } = [];
+
+    // The sim's TAXI_NAME rows, referenced by TaxiPathSegment.TaxiNameId — see
+    // TaxiName.cs for why references use a stable Id rather than list position.
+    public List<TaxiName> TaxiNames { get; set; } = [];
 }

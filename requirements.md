@@ -438,12 +438,276 @@ wasn't obvious whether that airport simply had none.
   XAML parse/binding crash, which builds/`dotnet test` cannot) per CLAUDE.md's
   testing policy. `AirportDataTreeBuilder`'s output itself is fully unit-tested.
 
+## v0.1+ — Edit taxiway naming/lighting and runway lighting (Edit tab)
+
+**User story:** As a user, after loading an airport, I can open an "Edit" tab
+and change a taxi path's name and left/right edge lighting, and a runway's
+edge light intensity, VASI/PAPI type+angle (per end/side), and approach light
+system (per end) — then save those edits as a named project so they're still
+there next time I load that airport, without needing MSFS running.
+
+This is a narrower, now-committed slice of the "Edit runway/taxiway/parking
+data" idea first drafted below — it covers naming/lighting only, not runway
+geometry, taxiway routing, or parking spot editing, which remain future,
+still-uncommitted work. **Out of scope, still not done:** none of this makes
+edits take effect in MSFS — `<Airport>` XML generation and the package/build
+flow (see the proposed epics below) are separate, still-unapproved epics; an
+edit made here only changes AirportSmith's own project file.
+
+Checked directly against the local MSFS 2024 SDK docs
+(`Documentation/public/retail/programming-apis/simconnect/api-reference/
+facilities/simconnect_addtofacilitydefinition`) before starting: `TAXI_PATH`
+has `LEFT_EDGE_LIGHTED`/`RIGHT_EDGE_LIGHTED` (INT32 bools) and `RUNWAY` has
+`EDGE_LIGHTS` (documented INT8: 0 NONE/1 LOW/2 MEDIUM/3 HIGH) — neither was
+previously requested from SimConnect. VASI (`TYPE`+`ANGLE`, 4 slots) and
+`APPROACH_LIGHTS.SYSTEM` were already extracted for the Airport Data tab, just
+stored as raw `int`s — promoted to real enums (`VasiType`,
+`ApproachLightSystemType`) as part of this epic since they're now user-facing
+picker values, not just inspector text.
+
+**Revised after first-round user feedback:** taxi path naming was originally a
+free-text `TaxiPathSegment.Name` per row — flagged even at the time as a
+known limitation, since the sim's real `TAXI_NAME` array is shared across
+multiple `TAXI_PATH` rows, and flattening it broke that relationship (renaming
+one row didn't rename the taxiway it was actually part of). Two things fixed
+this:
+1. Taxi names are now a first-class, user-managed list
+   (`AirportDetails.TaxiNames`, a `List<TaxiName>` keyed by a stable `Guid`,
+   not array position — see `TaxiName.cs`) with its own Add/Rename/Delete UI
+   in the Edit tab, and `TaxiPathSegment.TaxiNameId` references it by that
+   `Guid` instead of owning a string. Renaming or deleting an entry is
+   instantly reflected everywhere it's referenced (the picker, the diagram),
+   since every reference resolves the shared entry live rather than holding a
+   copy.
+2. The Edit tab's diagram (a second, independent `AirportDiagramView`
+   instance, reusing the same control as the read-only Diagram tab) is now
+   shown alongside the grids, giving spatial context for which taxi path is
+   which — click one or more taxiways there (Ctrl+click to extend the
+   selection) to batch-edit their name/lighting together via a popover,
+   rather than hunting through grid rows one at a time.
+
+**Revised after second-round user feedback:**
+1. Editing a taxi path's name (via the grid picker or the batch popover) or
+   renaming/deleting a Taxi Name now updates the diagram's label/styling for
+   every affected taxiway immediately, without reloading — `TaxiwaySegmentShape`
+   changed from an immutable record to a mutable, `INotifyPropertyChanged`
+   class (`Name`/`HasName` alongside the already-mutable `IsSelected`), and
+   `MainViewModel` recomputes them from `AirportDetails.TaxiNames` whenever a
+   `TaxiPathEditViewModel.TaxiNameId` or `TaxiNameEditViewModel.Value` changes.
+   Re-running `AirportDiagramProjector.Project` on every edit was deliberately
+   avoided — it would also reset the diagram's zoom/pan/selection state, which
+   nothing else in the Edit tab does on every keystroke.
+2. Selecting one or more rows in the Taxi Paths grid now highlights the
+   matching taxiway(s) in the diagram too (same `IsSelected` mechanism as a
+   diagram click), for the reverse spatial lookup — "where is this row?" —
+   but deliberately does **not** open the batch-edit popover, since a grid
+   selection isn't a request to batch-edit. `MainViewModel` tracks which of
+   the two selection-changing paths fired most recently
+   (`ShowTaxiwayBatchEditPopover` vs. the older `HasTaxiwaySelection`, which
+   now only means "some shape is highlighted, from either source").
+3. Each taxi path row also has a "Hide from Diagram" checkbox
+   (`TaxiPathEditViewModel.IsHiddenFromDiagram`) that hides its shape from the
+   diagram (`TaxiwaySegmentShape.IsVisible`) — a decluttering convenience for
+   busy airports, not an edited property of the airport itself, so it's
+   **not** written to `TaxiPathSegment`/persisted by Save Project.
+
+**Revised after third-round user feedback — bug fix and two refinements:**
+1. **Bug fix:** batch-editing a selection of taxi paths was silently changing
+   fields on selected paths beyond what the user actually touched in the
+   popover. Root cause: the popover seeded its Name/lighting fields from
+   whichever path happened to be first in the selection, and Apply then wrote
+   all three fields to every selected path unconditionally — so selecting two
+   paths that didn't already agree on a field (e.g. different names), then
+   touching only one control in the popover (e.g. just a lighting checkbox),
+   silently stamped the *other*, untouched field(s) from the first path onto
+   every selected path too. Fixed by tracking which fields the user actually
+   interacted with (`TaxiwayBatchEditViewModel.IsTaxiNameIdTouched`, and
+   `LeftEdgeLighted`/`RightEdgeLighted` becoming tri-state `bool?` where
+   `null` means "leave unchanged," bound to `IsThreeState="True"` checkboxes)
+   instead of seeding from a path's current values and overwriting
+   unconditionally. Apply now only writes a field to the selected paths if
+   the user touched it, leaving everything else exactly as it was per-path.
+   Covered by
+   `MainViewModelTests.ApplyTaxiwayBatchEditCommand_UntouchedFields_LeaveEachSelectedPathsOwnValueUnchanged`
+   and `TaxiwayBatchEditViewModelTests`. (When the popover's staged values
+   actually get reset back to untouched was revised again below — see
+   fourth-round feedback.)
+2. The "Hide from Diagram" column is now the first column in the Taxi Paths
+   grid (was last).
+3. Hiding from the diagram is now also available for runways: each Runway
+   row has its own "Hide from Diagram" checkbox (first column,
+   `RunwayEditViewModel.IsHiddenFromDiagram`), which hides that runway's
+   shape — including its nested pavement-extension/threshold-marking/
+   approach-light overlays, since they render inside the same per-runway
+   `Canvas` whose `Visibility` this now controls — the same
+   display-only-convenience, not-persisted contract as the taxi path version
+   (`RunwayShape` gained the same `SourceIndex`/`IsVisible` pair as
+   `TaxiwaySegmentShape`, becoming a mutable class for the same reason).
+
+**Revised after fourth-round user feedback — two more bugs in the same
+batch-edit flow, both now fixed:**
+1. **Bug:** extending a diagram selection (Ctrl+clicking another taxiway
+   while the batch-edit popover was already open) silently reset the
+   popover's staged values back to "nothing touched" — so anything the user
+   had already picked before extending the selection was lost, without any
+   visible sign of it (the popover's `ComboBox` can keep displaying a
+   previously picked name even after its bound value resets to `null`, since
+   WPF doesn't necessarily clear a `ComboBox`'s own display just because
+   `SelectedValue` no longer matches any item). **Fix:** `MainViewModel` now
+   only resets `TaxiwayBatchEdit` to untouched when a batch-edit *session*
+   actually ends (the popover closes via Apply/Cancel, or the selection
+   becomes empty/grid-driven) — not on every incremental selection change
+   while it's open, so a whole session's staged values now survive however
+   the selection is built up.
+2. **Bug (the more serious one — this is what the user actually observed as
+   "changed paths that weren't selected"):** WPF's `DataGrid` marks a row
+   "selected" as a side effect of clicking *any* cell in it — including just
+   toggling an unrelated row's Left/Right Edge Lighted or Hide checkbox.
+   `SyncTaxiwaySelectionFromRows` (added for grid-row-selection-highlights-
+   diagram, see second-round feedback above) had no guard against this, so
+   an incidental grid click while a diagram-driven batch-edit session was
+   active would silently replace the diagram's whole selection with whatever
+   row was just clicked — meaning Apply would then hit that row instead of
+   the ones actually selected on the diagram, matching the report exactly
+   ("not applied to selected paths but most of the not selected"). **Fix:**
+   `SyncTaxiwaySelectionFromRows` is now a no-op while
+   `ShowTaxiwayBatchEditPopover` is true — grid clicks can't drive the
+   diagram highlight again until the active popover session is closed
+   (Apply or Cancel). Both bugs are covered by dedicated regression tests:
+   `MainViewModelTests.ExtendingDiagramSelection_DoesNotResetAlreadyStagedBatchEditValues`,
+   `SyncTaxiwaySelectionFromRows_WhilePopoverOpen_IsIgnored`, and
+   `SyncTaxiwaySelectionFromRows_AfterPopoverCloses_WorksAgain`.
+
+**Revised after fifth-round user feedback — a blank taxi name looked like an
+empty/junk row:** after the fourth-round fixes, the user correctly renamed a
+taxi name via the Taxi Names panel and was surprised it applied to "numerous
+paths" — not a bug this time: the sim's own `TAXI_NAME` array can (and
+typically does) include a blank entry, and many taxi paths that genuinely
+have no name (e.g. ones leading to parking) legitimately share `TaxiNameId`
+pointing at it, sometimes dozens at once — confirmed by
+`taxiway-name-research.md`'s ~65%-unnamed finding for a real airport. The
+panel showed that entry as an indistinguishable blank row, giving no hint it
+was meaningful or heavily shared before editing it. Fixed by adding
+`TaxiNameEditViewModel.DisplayValue` (shows `"(no name)"` instead of blank,
+styled gray/italic in the Taxi Names panel) and `IsUnnamed`, used everywhere
+a `TaxiName` is displayed — the panel's Name column (now a
+`DataGridTemplateColumn`: `CellTemplate` shows the styled `DisplayValue`,
+`CellEditingTemplate` still edits the real `Value` directly, so it stays a
+name like any other if that's genuinely wanted) and both Name pickers'
+`DisplayMemberPath` (the Taxi Paths grid's row picker and the batch
+popover's). Covered by `TaxiNameEditViewModelTests`.
+
+**Revised after sixth-round user feedback — checkboxes needed an extra
+click:** every checkbox in the Edit tab's grids (Hide from Diagram on both
+taxi paths and runways, Left/Right Edge Lighted) needed two clicks to toggle
+— a well-known WPF `DataGridCheckBoxColumn` quirk: the checkbox it renders
+isn't actually interactive until its cell becomes "current" (selected), so
+the first click just selects the cell and only the second one toggles it.
+Fixed by replacing all four with `DataGridTemplateColumn`s containing a real
+`CheckBox` directly in the `CellTemplate` — an always-interactive control
+that toggles on the first click, since it isn't gated behind the grid's
+edit-mode/cell-selection state the way `DataGridCheckBoxColumn`'s checkbox
+is. Pure XAML/rendering change, nothing in `MainViewModel` or below moved —
+not covered by automated tests, verified manually, same as the rest of this
+tab's WPF interaction.
+
+**Known limitations:**
+- While a diagram-driven batch-edit session is open (the popover is
+  showing), the Taxi Paths grid's own row selection can't drive the diagram
+  highlight (see fourth-round fix #2 above) — the user must Apply or Cancel
+  first. A deliberate trade-off for correctness (an incidental grid click
+  can no longer silently hijack an in-progress batch edit), not something
+  planned to be relaxed further without a more robust way to distinguish
+  "deliberate grid multi-select" from "incidental single-cell click."
+- `RUNWAY.EDGE_LIGHTS` is marshaled as `sbyte` (INT8) per the SDK docs — the
+  only INT8-sized field requested anywhere in this codebase, and this project
+  has previously hit a doc-declared-size-vs-actual-wire-size bug (see the
+  FLOAT32/FLOAT64 note in `SimConnectService.cs`). **Unconfirmed against a
+  live sim** — if `SURFACE`/`PRIMARY_NUMBER`/etc. come back corrupted on a
+  real airport, widen `FacilityRunwayData.EdgeLights` to `int` and re-verify.
+- The read-only "Taxi Paths" tab (distinct from the Edit tab) still
+  auto-generates its columns reflectively, so it now shows a raw
+  `TaxiNameId` GUID instead of a friendly name — a cosmetic regression versus
+  the old flat `Name` string column, deliberately not fixed here (would need
+  an `AutoGeneratingColumn` handler or hand-written columns) since the tab is
+  already a raw/unlabelled dump for every other enum-backed field (see the
+  "Airport Data" tab for the friendly, resolved view).
+
+**Acceptance criteria:**
+- Given an airport is loaded, the Edit tab shows: a Taxi Names panel (one
+  editable row per name, with Add/Delete); one editable row per taxi path
+  (a Name picker drawing only from that list — not free text — plus
+  left/right edge lighting checkboxes); one editable row per runway (edge
+  light intensity, VASI/PAPI type+angle for all four end/side slots, and
+  approach light system for both ends, each as a picker); and the airport's
+  diagram. Edits write immediately to the loaded `AirportDetails`
+  (`TaxiPathEditViewModel`/`RunwayEditViewModel`/`TaxiNameEditViewModel`), no
+  separate "apply" step for single-row edits.
+- Deleting a Taxi Name clears `TaxiNameId` on every taxi path that referenced
+  it (no row is left pointing at a name that no longer exists).
+- Setting a runway's VASI/PAPI or approach light picker to "(none)" clears
+  that field back to "not installed" (`null`); picking a value (re)creates it.
+- Clicking a taxiway in the Edit tab's diagram selects it (replacing any
+  existing selection); Ctrl+click adds/removes it from a multi-selection.
+  Selected taxiways are visually highlighted. With one or more selected, a
+  popover lets the user set a name and/or left/right lighting and apply
+  only the field(s) actually touched to every selected path at once — an
+  untouched field is left exactly as it was on each individual path, never
+  overwritten with another selected path's value (see the third-round
+  feedback above); Cancel or Apply both clear the selection afterward. The
+  read-only Diagram tab's existing pan-by-dragging-anywhere behavior
+  (including over a taxiway) is unchanged, since it never wires up the
+  click-to-select command.
+- Renaming a taxi path (via its grid picker or the batch popover), or
+  renaming/deleting an entry in the Taxi Names panel, updates the diagram's
+  taxiway label(s) and named/unnamed styling for every affected path
+  immediately — no reload, and without disturbing the diagram's current
+  zoom/pan or selection.
+- Selecting one or more rows in the Taxi Paths grid highlights the matching
+  taxiway(s) in the diagram (same highlight style as a diagram click) but
+  does not open the batch-edit popover; selecting via the diagram itself
+  still does.
+- Checking a taxi path or runway row's "Hide from Diagram" box (the first
+  column in each grid) hides its shape from the diagram (checking it for a
+  taxi path also clears its selection/highlight if it was selected);
+  unchecking it restores visibility. This is a display-only convenience for
+  decluttering a busy airport — it is not saved by Save Project and does not
+  affect `TaxiPathSegment`/`Runway`.
+- Given edits have been made, clicking **Save Project** writes an
+  `AirportProjectFile` (schema v2: `SchemaVersion`, `SavedAtUtc`, `Airport`)
+  to `AppDataHelper.AppDataPath\Projects\{ICAO}.json` via
+  `IAirportProjectStore`, and shows the path saved to.
+- Given a project was previously saved for the currently-typed ICAO, clicking
+  **Load Project** loads it (bypassing SimConnect entirely — no sim needs to
+  be running) and populates Airport/Diagram/Airport Data tab/Edit tab exactly
+  as a live load would; given no project exists for that ICAO, it sets an
+  error message instead and leaves the current state untouched.
+- Given a project file from schema v1 (this epic's first, since-superseded
+  shape — free-text `TaxiPathSegment.Name`, no `TaxiNames` list) or missing
+  any field a later schema version added, loading it does not throw: fields
+  simply missing from the file come back as their type default
+  (`false`/`None`/`null`) per `CLAUDE.md`'s back-compat rule, and a v1 file's
+  legacy names are actively migrated into the v2 `TaxiNames`/`TaxiNameId`
+  shape rather than silently discarded — including restoring the "multiple
+  paths share one taxiway name" relationship the v1 flat-string shape had
+  broken, by deduplicating identical legacy name strings into one shared
+  `TaxiName`. Verified by `AirportProjectStoreTests.Load_OldFileMissingNewFields_...`
+  and `Load_V1FileWithLegacyNames_MigratesToTaxiNamesAndTaxiNameId` — this is
+  the concrete baseline future schema changes must keep satisfying.
+- The Edit tab (including its embedded diagram, the click-to-select
+  interaction, and the batch-edit popover's placement/rendering), its
+  Save/Load Project buttons, and the underlying `AirportProjectStore`/
+  `SimConnectService` I/O are not covered by automated tests (real WPF
+  rendering/mouse input and real file/SimConnect I/O) — verified manually,
+  including the `EDGE_LIGHTS` INT8 risk above, which needs a live sim with a
+  real airport of known edge-light intensity to confirm.
+
 ## Proposed v0.1+ epics (not yet committed — for prioritization with the user)
 
 These are draft candidates surfaced by the research above, not approved user stories. Each needs to be broken into concrete acceptance criteria once prioritized.
 
-1. **Edit runway/taxiway/parking data.** UI to modify the extracted data (e.g. runway surface/length, taxiway routing, parking spot type/heading/radius).
-2. **Generate SDK-compatible `<Airport>` XML.** Produce Dev-Mode/PackageTool-compatible XML for the edited airport, including the `<Exclude>` entries needed to properly override the stock version.
+1. **Edit runway geometry/taxiway routing/parking data.** UI to modify runway surface/length, taxiway routing, and parking spot type/heading/radius. Taxi path naming/lighting and runway lighting (edge lights, VASI/PAPI, approach lights) are already committed above — this covers the rest of the original "Edit runway/taxiway/parking data" idea.
+2. **Generate SDK-compatible `<Airport>` XML.** Produce Dev-Mode/PackageTool-compatible XML for the edited airport, including the `<Exclude>` entries needed to properly override the stock version. Still needed before any edit (including the ones committed above) can take effect in MSFS.
 3. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
 
 ## Test coverage
@@ -506,14 +770,15 @@ These are draft candidates surfaced by the research above, not approved user sto
   chevrons (past the old, buggy 10-chevron cap) has its last chevron's
   arm-ends land exactly on the extension's own far edge, confirming full
   coverage rather than truncation; a runway with a `PrimaryApproachLights` of
-  `SystemType` 7 (ALSF-2) renders the Full category's rail-light count and
-  first/last positions plus the red crossbar's two endpoints, all matching
-  hand-calculated coordinates, with `SecondaryFeatures.ApproachLights` null;
-  `SystemType` 3 (MALSR) renders the same Full-category rail-light count with
-  an empty `CrossBar`; `SystemType` 11 (MALS) renders the Short category's
-  (fewer) rail-light count; `SystemType` 1 (ODALS) renders the Sparse
+  `SystemType` `ApproachLightSystemType.Alsf2` renders the Full category's
+  rail-light count and first/last positions plus the red crossbar's two
+  endpoints, all matching hand-calculated coordinates, with
+  `SecondaryFeatures.ApproachLights` null; `Malsr` renders the same
+  Full-category rail-light count with an empty `CrossBar`; `Mals` renders the
+  Short category's (fewer) rail-light count; `Odals` renders the Sparse
   category's widely-spaced rail-light count; a runway with no
-  `PrimaryApproachLights` set and one with `SystemType` 0 (NONE) both produce
+  `PrimaryApproachLights` set and one with `SystemType` `0` (unnamed — no
+  `None` member on this enum, see `ApproachLightSystemType.cs`) both produce
   a null `ApproachLights` shape; multi-runway canvas bounds cover
   every runway; a `Taxi`-typed
   segment with resolved coordinates and a name is included with `HasName=true`,
@@ -537,3 +802,119 @@ These are draft candidates surfaced by the research above, not approved user sto
   (catches a XAML parse/binding crash, which builds/`dotnet test` cannot) —
   actually opening the Diagram tab and checking the rendering visually is a
   manual step for the user.
+- `AirportProjectStoreTests` (`AirportSmith.Tests`) covers: save-then-load
+  round-trips every field this epic added (`TaxiPathSegment.LeftEdgeLighted`/
+  `RightEdgeLighted`/`TaxiNameId`, `AirportDetails.TaxiNames`,
+  `Runway.EdgeLightIntensity`, a `VasiType`-typed field,
+  `ApproachLightSystem`'s enum-typed `SystemType`); `Load` returns `null` for
+  an ICAO with no saved project; `HasProject` reflects whether `Save` was
+  called; a hand-written "old" (schema v1) JSON file missing every field this
+  epic added deserializes without exception, with those fields coming back as
+  their type default (proves the back-compat contract in the Edit-tab epic
+  above rather than assuming it); a corrupt (non-JSON) file makes `Load`
+  return `null` rather than throw; a v1 file whose `TaxiPaths` use the old
+  free-text `Name` field (including two paths sharing one name, and one
+  blank) migrates into v2's `TaxiNames`/`TaxiNameId` shape with duplicate
+  names deduplicated into one shared `TaxiName` and the blank one left
+  unnamed (`Load_V1FileWithLegacyNames_MigratesToTaxiNamesAndTaxiNameId`); a
+  genuine v2 file's `TaxiNames` isn't re-migrated or duplicated on load
+  (`Load_V2File_DoesNotReMigrateOrDuplicateTaxiNames`). Every test uses its
+  own temp directory, never `AppDataHelper.AppDataPath`, per `CLAUDE.md`'s
+  guardrail.
+- `TaxiPathEditViewModelTests`/`RunwayEditViewModelTests`/
+  `TaxiNameEditViewModelTests` (`AirportSmith.Tests`) cover: setting an
+  editable property writes through to the wrapped `TaxiPathSegment`/`Runway`/
+  `TaxiName` and raises `PropertyChanged`; setting the same value again does
+  not re-raise it; setting a runway's approach-light system type to a value
+  (re)creates the underlying `ApproachLightSystem` record, and setting it to
+  `null` clears it back to "not installed"; `TaxiPathEditViewModel
+  .ClearTaxiNameIfReferencing` clears `TaxiNameId` only when it matches the
+  given id, leaving a non-matching one untouched; `TaxiNameEditViewModel
+  .DisplayValue`/`IsUnnamed` correctly show `"(no name)"`/`true` for a blank
+  `Value` and the real string/`false` otherwise, in both directions (starting
+  blank, and clearing a non-blank value back to blank), with `PropertyChanged`
+  raised for both derived properties whenever `Value` changes. Pure
+  computation, no fakes needed.
+- `MainViewModelTests` additionally covers: a successful load populates
+  `TaxiPathEdits`/`RunwayEdits`/`TaxiNames` (one wrapper per item, matching
+  the loaded data); a not-connected load leaves them empty;
+  `IsProjectStoreAvailable` and `SaveProjectCommand`/`LoadProjectCommand`'s
+  `CanExecute` correctly depend on whether an `IAirportProjectStore` was
+  injected (and, for Save, whether an airport is loaded); executing
+  `SaveProjectCommand` delegates to the store and sets `LastProjectSavePath`;
+  `LoadProjectCommand` against an ICAO with no saved project sets an error
+  message and leaves `Airport` untouched; against one that does, it populates
+  `Airport`/`Diagram`/`AirportDataTree`/`RunwayEdits` exactly like a live
+  load, with no live `SimConnectService` call needed — via the new
+  `Fakes/FakeAirportProjectStore`; `AddTaxiNameCommand`'s `CanExecute` depends
+  on an airport being loaded and its execution adds a blank `TaxiName` to
+  both `Airport.TaxiNames` and the `TaxiNames` collection;
+  `DeleteTaxiNameCommand`'s execution removes it from both and clears
+  `TaxiNameId` on every `TaxiPathEdits` entry that referenced it;
+  `ToggleTaxiwaySelectionCommand` replaces the selection on a plain click and
+  extends/toggles it on a Ctrl+click (`ExtendSelection: true`), and — unlike
+  `SyncTaxiwaySelectionFromRows` — sets `ShowTaxiwayBatchEditPopover`;
+  `ApplyTaxiwayBatchEditCommand` writes only the `TaxiwayBatchEdit` field(s)
+  actually touched onto every currently selected taxi path — a dedicated
+  regression test
+  (`ApplyTaxiwayBatchEditCommand_UntouchedFields_LeaveEachSelectedPathsOwnValueUnchanged`)
+  selects two paths that don't already agree on name/lighting, touches only
+  one field, and asserts every other field on both paths is unchanged
+  afterward, per the third-round bug-fix above — and updates the
+  corresponding diagram shapes' `Name`/`HasName` immediately before clearing
+  the selection; editing `TaxiPathEditViewModel.TaxiNameId` directly (as the
+  grid's picker does) has the same immediate-diagram-update effect; renaming
+  a `TaxiNameEditViewModel.Value` updates every diagram shape whose path
+  references that name, not just one; `DeleteTaxiNameCommand` also clears the
+  affected shape's label back to unnamed; `SyncTaxiwaySelectionFromRows`
+  highlights exactly the shapes matching the given rows and leaves
+  `ShowTaxiwayBatchEditPopover` false, including when it runs right after a
+  diagram click had set it true (grid selection always wins); toggling
+  `TaxiPathEditViewModel.IsHiddenFromDiagram` flips the matching shape's
+  `IsVisible` and, when hiding, also clears its `IsSelected` (and thus
+  `HasTaxiwaySelection`) so a hidden shape can't linger as a phantom
+  selection; toggling `RunwayEditViewModel.IsHiddenFromDiagram` flips the
+  matching `RunwayShape.IsVisible` the same way (no selection concept for
+  runways, so nothing else to clear).
+- `TaxiwayBatchEditViewModelTests` (`AirportSmith.Tests`) covers: a new
+  instance starts fully untouched (`IsTaxiNameIdTouched` false,
+  `TaxiNameId`/`LeftEdgeLighted`/`RightEdgeLighted` all `null`); setting
+  `TaxiNameId` marks it touched even when set to `null` (an explicit "(none)"
+  choice, not "untouched"); `ResetToUntouched` clears both the values and the
+  touched flag.
+- `MainViewModelTests` additionally covers the fourth-round bug fixes above:
+  extending a diagram selection (`ToggleTaxiwaySelectionCommand` with
+  `ExtendSelection: true`) after already staging a value in
+  `TaxiwayBatchEdit` leaves that staged value in place, and Apply still
+  writes it to every selected path
+  (`ExtendingDiagramSelection_DoesNotResetAlreadyStagedBatchEditValues`);
+  `SyncTaxiwaySelectionFromRows` called while `ShowTaxiwayBatchEditPopover`
+  is true leaves the diagram's existing selection completely untouched
+  (`SyncTaxiwaySelectionFromRows_WhilePopoverOpen_IsIgnored`) and works
+  normally again once the popover is closed
+  (`SyncTaxiwaySelectionFromRows_AfterPopoverCloses_WorksAgain`).
+- `AirportDataTreeBuilderTests` was updated for `ApproachLightSystem
+  .SystemType`/`Runway.*VasiType` becoming real enums (`ApproachLightSystemType`/
+  `VasiType`): they now render via the builder's existing enum-`ToString()`
+  fallback (e.g. `"SystemType: Alsf2"`) instead of the old raw-number-plus-
+  label format, so their now-redundant label dictionaries were deleted from
+  `AirportDataTreeBuilder` rather than kept alongside real enum types. Also
+  updated for `TaxiPathSegment.Name` becoming `TaxiNameId`: the tree's
+  per-item summary label now shows `(named, id <guid>)` or
+  `(unnamed, type N)` rather than a resolved name string, since this raw
+  inspector has no `AirportDetails.TaxiNames` in scope at that call site.
+- `AirportDiagramProjectorTests` was updated for `TaxiwaySegmentShape`
+  gaining `SourceIndex` (verified to track a segment's real position in
+  `AirportDetails.TaxiPaths`, not its position in the filtered
+  `TaxiwaySegments` list, when an earlier path is excluded) and for taxi
+  names resolving via `AirportDetails.TaxiNames`/`TaxiNameId` instead of a
+  flat string (including a `TaxiNameId` that doesn't match any `TaxiNames`
+  entry rendering the same as unnamed, not a crash or stale label).
+- The Edit tab itself (`MainWindow.xaml`'s new tab, including its embedded
+  diagram, the taxiway click-to-select interaction, the batch-edit popover's
+  placement/rendering, and its `DataGrid`/`ComboBox` editing controls) and the
+  real `AirportProjectStore`/`SimConnectService` I/O are not covered by
+  automated tests (real WPF
+  rendering/editing and real file/SimConnect I/O) — verified manually per
+  `CLAUDE.md`'s testing policy, including confirming `RUNWAY.EDGE_LIGHTS`'s
+  INT8 marshaling against a live sim (see the Known limitations above).

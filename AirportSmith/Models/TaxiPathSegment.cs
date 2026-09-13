@@ -12,16 +12,28 @@ namespace AirportSmith.Models;
 // implemented per the SDK's documented field order, not yet verified.
 //
 // TAXI_PATH itself has no free-text NAME field — only NAME_INDEX, an index
-// into the separate TAXI_NAME facility type. Name here is resolved from that
-// lookup by SimConnectService (see ResolveTaxiPathNames) and left blank if
-// the index falls outside the TAXI_NAME rows returned for the airport.
+// into the separate TAXI_NAME facility type. TaxiNameId is set by
+// SimConnectService (see ResolveTaxiPathNames) to the matching AirportDetails
+// .TaxiNames entry's Id, or left null if NAME_INDEX falls outside the
+// TAXI_NAME rows returned for the airport. A previous revision flattened
+// this into a per-segment Name string, which silently broke the sim's own
+// "many paths share one taxiway name" relationship — renaming one path left
+// every other path with the same original name untouched. Referencing the
+// shared AirportDetails.TaxiNames list by Id fixes that: renaming or
+// reassigning propagates to every segment pointing at that Id, with no
+// separate resolution step needed here.
 public class TaxiPathSegment
 {
     public int Type { get; set; }
     public int StartIndex { get; set; }
     public int EndIndex { get; set; }
     public double WidthMeters { get; set; }
-    public string Name { get; set; } = string.Empty;
+    public Guid? TaxiNameId { get; set; }
+
+    // TAXI_PATH.LEFT_EDGE_LIGHTED/RIGHT_EDGE_LIGHTED per the SDK docs —
+    // default false, matching the SDK's own documented default of 0.
+    public bool LeftEdgeLighted { get; set; }
+    public bool RightEdgeLighted { get; set; }
 
     public double? StartXMeters { get; set; }
     public double? StartZMeters { get; set; }

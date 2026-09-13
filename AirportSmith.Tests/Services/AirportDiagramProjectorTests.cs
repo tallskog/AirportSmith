@@ -268,7 +268,7 @@ public class AirportDiagramProjectorTests
             HeadingDeg = 0,
             LengthMeters = 1000,
             WidthMeters = 100,
-            PrimaryApproachLights = new ApproachLightSystem(SystemType: 7), // ALSF-2
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Alsf2),
         }));
 
         var diagram = AirportDiagramProjector.Project(airport);
@@ -314,7 +314,7 @@ public class AirportDiagramProjectorTests
             HeadingDeg = 0,
             LengthMeters = 1000,
             WidthMeters = 100,
-            PrimaryApproachLights = new ApproachLightSystem(SystemType: 3), // MALSR
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Malsr),
         }));
 
         var diagram = AirportDiagramProjector.Project(airport);
@@ -337,7 +337,7 @@ public class AirportDiagramProjectorTests
             HeadingDeg = 0,
             LengthMeters = 1000,
             WidthMeters = 100,
-            PrimaryApproachLights = new ApproachLightSystem(SystemType: 11), // MALS
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Mals),
         }));
 
         var diagram = AirportDiagramProjector.Project(airport);
@@ -359,7 +359,7 @@ public class AirportDiagramProjectorTests
             HeadingDeg = 0,
             LengthMeters = 1000,
             WidthMeters = 100,
-            PrimaryApproachLights = new ApproachLightSystem(SystemType: 1), // ODALS
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Odals),
         }));
 
         var diagram = AirportDiagramProjector.Project(airport);
@@ -406,22 +406,28 @@ public class AirportDiagramProjectorTests
     [Fact]
     public void Project_TaxiwaySegment_NamedAndResolved_IsIncludedWithHasNameTrue()
     {
-        var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
+        var taxiName = new TaxiName { Value = "A" };
+        var airport = Airport(a =>
         {
-            Type = (int)TaxiPathType.Taxi,
-            Name = "A",
-            StartXMeters = 0,
-            StartZMeters = 0,
-            EndXMeters = 200,
-            EndZMeters = 0,
-            WidthMeters = 20,
-        }));
+            a.TaxiNames.Add(taxiName);
+            a.TaxiPaths.Add(new TaxiPathSegment
+            {
+                Type = (int)TaxiPathType.Taxi,
+                TaxiNameId = taxiName.Id,
+                StartXMeters = 0,
+                StartZMeters = 0,
+                EndXMeters = 200,
+                EndZMeters = 0,
+                WidthMeters = 20,
+            });
+        });
 
         var diagram = AirportDiagramProjector.Project(airport);
 
         var segment = Assert.Single(diagram.TaxiwaySegments);
         Assert.True(segment.HasName);
         Assert.Equal("A", segment.Name);
+        Assert.Equal(0, segment.SourceIndex);
         Assert.Equal(150, segment.MidPoint.X, Precision);
         Assert.Equal(100, segment.MidPoint.Y, Precision);
         Assert.Equal(4, segment.WidthCorners.Count);
@@ -440,12 +446,33 @@ public class AirportDiagramProjectorTests
     }
 
     [Fact]
-    public void Project_TaxiwaySegment_EmptyName_HasNameFalse()
+    public void Project_TaxiwaySegment_NoTaxiNameId_HasNameFalse()
     {
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
             Type = (int)TaxiPathType.Taxi,
-            Name = "",
+            TaxiNameId = null,
+            StartXMeters = 0,
+            StartZMeters = 0,
+            EndXMeters = 200,
+            EndZMeters = 0,
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.False(Assert.Single(diagram.TaxiwaySegments).HasName);
+    }
+
+    [Fact]
+    public void Project_TaxiwaySegment_TaxiNameIdWithNoMatchingEntry_HasNameFalse()
+    {
+        // A TaxiNameId that doesn't resolve against AirportDetails.TaxiNames
+        // (e.g. the entry was deleted) is treated the same as unnamed, not a
+        // crash or a stale label.
+        var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = (int)TaxiPathType.Taxi,
+            TaxiNameId = Guid.NewGuid(),
             StartXMeters = 0,
             StartZMeters = 0,
             EndXMeters = 200,
@@ -463,7 +490,6 @@ public class AirportDiagramProjectorTests
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
             Type = (int)TaxiPathType.Runway,
-            Name = "09L",
             StartXMeters = 0,
             StartZMeters = 0,
             EndXMeters = 200,
@@ -481,7 +507,6 @@ public class AirportDiagramProjectorTests
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
             Type = (int)TaxiPathType.Taxi,
-            Name = "A",
             StartXMeters = null,
             StartZMeters = null,
             EndXMeters = 200,
@@ -491,6 +516,25 @@ public class AirportDiagramProjectorTests
         var diagram = AirportDiagramProjector.Project(airport);
 
         Assert.Empty(diagram.TaxiwaySegments);
+    }
+
+    [Fact]
+    public void Project_TaxiwaySegments_SourceIndexSkipsExcludedSegments()
+    {
+        // A Runway-typed path at index 0 is excluded from TaxiwaySegments —
+        // the surviving Taxi-typed path's SourceIndex must still be 1 (its
+        // real position in AirportDetails.TaxiPaths), not 0 (its position in
+        // the filtered TaxiwaySegments list) — this is what lets the Edit
+        // tab's diagram click map a shape back to the right TaxiPathEditViewModel.
+        var airport = Airport(a =>
+        {
+            a.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Runway, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+            a.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Taxi, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
+        });
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.Equal(1, Assert.Single(diagram.TaxiwaySegments).SourceIndex);
     }
 
     [Fact]

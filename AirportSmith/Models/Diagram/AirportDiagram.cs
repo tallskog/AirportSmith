@@ -1,3 +1,6 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+
 namespace AirportSmith.Models.Diagram;
 
 // A point already in final canvas/screen-space meters (X right, Y down,
@@ -61,29 +64,115 @@ public record RunwayEndFeatures(
 
 // PrimaryLabelPosition/SecondaryLabelPosition are each threshold nudged
 // inward along the runway centerline, so the designation text sits visibly
-// on the pavement rather than exactly on the runway's edge.
-public record RunwayShape(
-    string PrimaryDesignation,
-    string SecondaryDesignation,
-    Point2D Threshold1,
-    Point2D Threshold2,
-    IReadOnlyList<Point2D> Corners,
-    Point2D PrimaryLabelPosition,
-    Point2D SecondaryLabelPosition,
-    RunwayEndFeatures PrimaryFeatures,
-    RunwayEndFeatures SecondaryFeatures);
+// on the pavement rather than exactly on the runway's edge. SourceIndex is
+// this shape's index into AirportDetails.Runways, and IsVisible backs the
+// Edit tab's per-row "hide from diagram" toggle — same rationale as
+// TaxiwaySegmentShape's own SourceIndex/IsVisible (see its doc comment):
+// mutable/observable so MainViewModel can toggle it live without
+// re-projecting the whole diagram.
+public class RunwayShape : INotifyPropertyChanged
+{
+    public required string PrimaryDesignation { get; init; }
+    public required string SecondaryDesignation { get; init; }
+    public required Point2D Threshold1 { get; init; }
+    public required Point2D Threshold2 { get; init; }
+    public required IReadOnlyList<Point2D> Corners { get; init; }
+    public required Point2D PrimaryLabelPosition { get; init; }
+    public required Point2D SecondaryLabelPosition { get; init; }
+    public required RunwayEndFeatures PrimaryFeatures { get; init; }
+    public required RunwayEndFeatures SecondaryFeatures { get; init; }
+    public required int SourceIndex { get; init; }
+
+    private bool _isVisible = true;
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set
+        {
+            if (_isVisible == value) return;
+            _isVisible = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsVisible)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
 
 // WidthCorners is the taxiway's physical pavement footprint (a band, sized
 // from TaxiPathSegment.WidthMeters) — Start/End remain the bare centerline,
 // unchanged, for the existing named/unnamed line styling. MidPoint is where
-// a name label is placed for named segments.
-public record TaxiwaySegmentShape(
-    Point2D Start,
-    Point2D End,
-    bool HasName,
-    string Name,
-    IReadOnlyList<Point2D> WidthCorners,
-    Point2D MidPoint);
+// a name label is placed for named segments. SourceIndex is this shape's
+// index into the source AirportDetails.TaxiPaths — needed so the Edit tab's
+// diagram can map a clicked shape back to its TaxiPathEditViewModel (the
+// projector skips non-taxiway/unresolved segments, so this can't be
+// recovered from TaxiwaySegments' own list position). Unlike every other
+// diagram shape, this one is a mutable class (not a record): HasName/Name are
+// still set once by the projector at load time but stay externally settable
+// so MainViewModel can push a live update straight onto the shape when the
+// user renames a taxi path (or the taxi name it points at) — re-running the
+// whole projection on every edit would also reset zoom/pan/selection, which
+// nothing else in the Edit tab does. IsSelected is the Edit tab's
+// click-to-select highlight; IsVisible backs its per-row "hide from diagram"
+// toggle. AirportDiagramView's bindings/DataTriggers need PropertyChanged to
+// react to all of these.
+public class TaxiwaySegmentShape : INotifyPropertyChanged
+{
+    public required Point2D Start { get; init; }
+    public required Point2D End { get; init; }
+    public required IReadOnlyList<Point2D> WidthCorners { get; init; }
+    public required Point2D MidPoint { get; init; }
+    public required int SourceIndex { get; init; }
+
+    private bool _hasName;
+    public required bool HasName
+    {
+        get => _hasName;
+        set => SetField(ref _hasName, value);
+    }
+
+    private string _name = string.Empty;
+    public required string Name
+    {
+        get => _name;
+        set => SetField(ref _name, value);
+    }
+
+    private bool _isSelected;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetField(ref _isSelected, value);
+    }
+
+    private bool _isVisible = true;
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set => SetField(ref _isVisible, value);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    // Deliberately not reusing AirportSmith.ViewModels.ViewModelBase's
+    // identical helper — Models shouldn't depend on the ViewModels layer.
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
+    }
+}
+
+// Raised by AirportDiagramView when the user clicks a taxiway shape (see its
+// TaxiwayClickCommand) and consumed by MainViewModel.ToggleTaxiwaySelectionCommand.
+// ExtendSelection is true for a Ctrl+click (toggle this shape's membership in
+// the current multi-selection) and false for a plain click (replace the
+// selection with just this shape) — the modifier-key check itself is a
+// WPF/view concern and stays in AirportDiagramView's code-behind; this record
+// is a plain DTO so the ViewModel layer doesn't need to know about
+// System.Windows.Input.
+public sealed record TaxiwaySelectionRequest(TaxiwaySegmentShape Shape, bool ExtendSelection);
 
 public record ParkingSpotShape(Point2D Center, double RadiusMeters, Point2D HeadingTip);
 

@@ -1,6 +1,7 @@
 using AirportSmith.Models;
 using Microsoft.FlightSimulator.SimConnect;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
 
@@ -62,7 +63,13 @@ public class SimConnectService : ISimConnectService
     // RUNWAY: LATITUDE/LONGITUDE/ALTITUDE are FLOAT64; HEADING/LENGTH/WIDTH are
     // FLOAT32 (this was the bug in the previous revision — they were declared
     // as double, which corrupted every field after them); SURFACE and the
-    // PRIMARY_*/SECONDARY_* designators are INT32.
+    // PRIMARY_*/SECONDARY_* designators are INT32. EDGE_LIGHTS is documented
+    // as INT8 (sbyte) — the only INT8-sized field requested anywhere in this
+    // codebase so far, and this project has already been bitten once by a
+    // doc-declared size not matching the actual wire size (see the FLOAT32/
+    // FLOAT64 bug above), so this is UNCONFIRMED against a live sim: if
+    // SURFACE/PRIMARY_NUMBER/etc. downstream of it come back corrupted,
+    // widen this to int and re-verify.
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct FacilityRunwayData
     {
@@ -70,6 +77,7 @@ public class SimConnectService : ISimConnectService
         public float Heading, Length, Width;
         public int Surface;
         public int PrimaryNumber, PrimaryDesignator, SecondaryNumber, SecondaryDesignator;
+        public sbyte EdgeLights;
     }
 
     // VASI/PAPI light data for one runway end-side. RUNWAY nests up to four of
@@ -164,11 +172,15 @@ public class SimConnectService : ISimConnectService
     // between sub-types isn't guaranteed, so resolution can't happen inline).
     // An earlier revision requested a "NAME" field that doesn't exist on
     // TAXI_PATH itself, corrupting every subsequent field. WIDTH is FLOAT32.
+    // LEFT_EDGE_LIGHTED/RIGHT_EDGE_LIGHTED are INT32 bools (default 0/false)
+    // per the SDK docs, inserted here (right after WIDTH, before START/END)
+    // to match the request order added in RegisterFacilityDefinition.
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct FacilityTaxiPathData
     {
         public int Type;
         public float Width;
+        public int LeftEdgeLighted, RightEdgeLighted;
         public int Start, End;
         public uint NameIndex;
     }
@@ -347,6 +359,7 @@ public class SimConnectService : ISimConnectService
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "PRIMARY_DESIGNATOR");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SECONDARY_NUMBER");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SECONDARY_DESIGNATOR");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "EDGE_LIGHTS");
 
         // Order here fixes the PavementSlotIndex mapping in OnFacilityData —
         // same fragility as the VASI ordering comment below.
@@ -441,6 +454,8 @@ public class SimConnectService : ISimConnectService
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN TAXI_PATH");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LEFT_EDGE_LIGHTED");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "RIGHT_EDGE_LIGHTED");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "START");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "END");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "NAME_INDEX");
@@ -567,6 +582,7 @@ public class SimConnectService : ISimConnectService
                     WidthMeters = r.Width,
                     SurfaceType = r.Surface,
                     ElevationMeters = r.Altitude,
+                    EdgeLightIntensity = (RunwayLightIntensity)r.EdgeLights,
                 });
                 pending.VasiSlotIndex = 0;
                 pending.PavementSlotIndex = 0;
@@ -606,12 +622,13 @@ public class SimConnectService : ISimConnectService
                 // that case, not a real glideslope angle, so both stay null.
                 if (v.Type != 0)
                 {
+                    var vasiType = (VasiType)v.Type;
                     switch (pending.VasiSlotIndex)
                     {
-                        case 0: runway.PrimaryLeftVasiType = v.Type; runway.PrimaryLeftVasiAngleDeg = v.Angle; break;
-                        case 1: runway.PrimaryRightVasiType = v.Type; runway.PrimaryRightVasiAngleDeg = v.Angle; break;
-                        case 2: runway.SecondaryLeftVasiType = v.Type; runway.SecondaryLeftVasiAngleDeg = v.Angle; break;
-                        case 3: runway.SecondaryRightVasiType = v.Type; runway.SecondaryRightVasiAngleDeg = v.Angle; break;
+                        case 0: runway.PrimaryLeftVasiType = vasiType; runway.PrimaryLeftVasiAngleDeg = v.Angle; break;
+                        case 1: runway.PrimaryRightVasiType = vasiType; runway.PrimaryRightVasiAngleDeg = v.Angle; break;
+                        case 2: runway.SecondaryLeftVasiType = vasiType; runway.SecondaryLeftVasiAngleDeg = v.Angle; break;
+                        case 3: runway.SecondaryRightVasiType = vasiType; runway.SecondaryRightVasiAngleDeg = v.Angle; break;
                     }
                 }
                 pending.VasiSlotIndex++;
@@ -627,7 +644,7 @@ public class SimConnectService : ISimConnectService
                 // check) isn't the right signal for this struct.
                 if (al.System != 0)
                 {
-                    var lights = new ApproachLightSystem(al.System);
+                    var lights = new ApproachLightSystem((ApproachLightSystemType)al.System);
                     switch (pending.ApproachLightsSlotIndex)
                     {
                         case 0: runwayForApproachLights.PrimaryApproachLights = lights; break;
@@ -673,6 +690,8 @@ public class SimConnectService : ISimConnectService
                     StartIndex = t.Start,
                     EndIndex = t.End,
                     WidthMeters = t.Width,
+                    LeftEdgeLighted = t.LeftEdgeLighted != 0,
+                    RightEdgeLighted = t.RightEdgeLighted != 0,
                 });
                 // Kept parallel to Details.TaxiPaths (same add order); resolved
                 // against TaxiNames in OnFacilityDataEnd once all rows are in.
@@ -708,14 +727,21 @@ public class SimConnectService : ISimConnectService
 
     // TAXI_PATH rows and TAXI_NAME rows can arrive in any order relative to each
     // other, so NAME_INDEX can't be resolved inline in OnFacilityData — only once
-    // every row for this request is in.
+    // every row for this request is in. Builds Details.TaxiNames (one TaxiName
+    // per raw TAXI_NAME row, in arrival order, each with a fresh Id) and points
+    // each TaxiPathSegment.TaxiNameId at the matching entry — see TaxiName.cs/
+    // TaxiPathSegment.TaxiNameId for why a stable Id is used instead of keeping
+    // the raw array index around.
     private static void ResolveTaxiPathNames(PendingLookup pending)
     {
+        var taxiNames = pending.TaxiNames.Select(value => new TaxiName { Value = value }).ToList();
+        pending.Details.TaxiNames = taxiNames;
+
         for (int i = 0; i < pending.Details.TaxiPaths.Count; i++)
         {
             var index = pending.TaxiPathNameIndices[i];
-            if (index < pending.TaxiNames.Count)
-                pending.Details.TaxiPaths[i].Name = pending.TaxiNames[(int)index];
+            if (index < taxiNames.Count)
+                pending.Details.TaxiPaths[i].TaxiNameId = taxiNames[(int)index].Id;
         }
     }
 

@@ -109,11 +109,35 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Canvas>
+                        <!-- IsVisible backs the Edit tab's per-row "hide from diagram" toggle — a
+                             workspace convenience (TaxiPathEditViewModel.IsHiddenFromDiagram), not a
+                             real airport property. It defaults true and the read-only Diagram tab has
+                             no way to change it, so every segment there stays visible as before. -->
+                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
                             <!-- Pavement footprint band, sized from TaxiPathSegment.WidthMeters. The
-                                 centerline below stays the named/unnamed indicator, unchanged. -->
+                                 centerline below stays the named/unnamed indicator, unchanged. This is
+                                 also the click target for the Edit tab's diagram multi-select (a wider,
+                                 friendlier hit area than the thin centerline) — see
+                                 TaxiwayShape_MouseLeftButtonDown; the highlight below only ever shows
+                                 IsSelected=true when that's wired up (the read-only Diagram tab never
+                                 sets it). -->
                             <Polygon Points="{Binding WidthCorners, Converter={StaticResource Point2DListToPointCollection}}"
-                                     Fill="#33808080" Stroke="Gray" StrokeThickness="0.5"/>
+                                     MouseLeftButtonDown="TaxiwayShape_MouseLeftButtonDown">
+                                <Polygon.Style>
+                                    <Style TargetType="Polygon">
+                                        <Setter Property="Fill" Value="#33808080"/>
+                                        <Setter Property="Stroke" Value="Gray"/>
+                                        <Setter Property="StrokeThickness" Value="0.5"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                <Setter Property="Fill" Value="#55FFA500"/>
+                                                <Setter Property="Stroke" Value="Orange"/>
+                                                <Setter Property="StrokeThickness" Value="2.5"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Polygon.Style>
+                            </Polygon>
                             <Line X1="{Binding Start.X}" Y1="{Binding Start.Y}" X2="{Binding End.X}" Y2="{Binding End.Y}" StrokeThickness="1.5">
                                 <Line.Style>
                                     <Style TargetType="Line">
@@ -143,7 +167,9 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Canvas>
+                        <!-- IsVisible backs the Edit tab's per-row "hide from diagram" toggle — see
+                             the equivalent comment on the taxiway template above. -->
+                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
                             <!-- Blast pad / overrun: extra pavement extending outward beyond each
                                  threshold. Drawn first (bottom layer) — a null feature (ContentControl
                                  Content unset) simply renders nothing. -->

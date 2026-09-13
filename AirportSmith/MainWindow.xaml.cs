@@ -1,4 +1,6 @@
+using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using AirportSmith.ViewModels;
 
@@ -13,6 +15,15 @@ public partial class MainWindow : Window
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = _viewModel;
+    }
+
+    // WPF's DataGrid has no bindable SelectedItems, so a code-behind handler
+    // is the pragmatic way to forward multi-row selection to the ViewModel —
+    // see MainViewModel.SyncTaxiwaySelectionFromRows for what it does with it.
+    private void TaxiPathsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is DataGrid grid)
+            _viewModel.SyncTaxiwaySelectionFromRows(grid.SelectedItems.Cast<TaxiPathEditViewModel>());
     }
 
     protected override void OnSourceInitialized(EventArgs e)

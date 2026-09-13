@@ -100,18 +100,11 @@ public static class AirportDataTreeBuilder
     // all (a real gap in the SDK's own documentation, not a lookup we missed)
     // — inventing a label list for it would risk showing a wrong or
     // misleading name, worse than showing the honest raw number.
-    private static readonly IReadOnlyDictionary<int, string> ApproachLightSystemLabels = new Dictionary<int, string>
-    {
-        [0] = "NONE", [1] = "ODALS", [2] = "MALSF", [3] = "MALSR", [4] = "SSALF", [5] = "SSALR",
-        [6] = "ALSF1", [7] = "ALSF2", [8] = "RAIL", [9] = "CALVERT", [10] = "CALVERT2",
-        [11] = "MALS", [12] = "SALS", [13] = "SALSF", [14] = "SSALS",
-    };
-
-    private static readonly IReadOnlyDictionary<int, string> VasiTypeLabels = new Dictionary<int, string>
-    {
-        [1] = "VASI21", [2] = "VASI22", [3] = "VASI23", [4] = "VASI31", [5] = "VASI32", [6] = "VASI33",
-        [7] = "PAPI2", [8] = "PAPI4", [9] = "TRICOLOR", [10] = "PVASI", [11] = "TVASI", [12] = "BALL", [13] = "APAP",
-    };
+    // ApproachLightSystem.SystemType and Runway.*VasiType used to have label
+    // dictionaries here, back when they were raw ints — now that they're real
+    // enums (ApproachLightSystemType/VasiType), IsLeafType/FormatLeaf's
+    // default value.ToString() already renders the member name (e.g.
+    // "Papi4") with no lookup needed.
 
     private static readonly IReadOnlyDictionary<int, string> FrequencyTypeLabels = new Dictionary<int, string>
     {
@@ -155,11 +148,6 @@ public static class AirportDataTreeBuilder
     private static readonly IReadOnlyDictionary<(Type OwnerType, string PropertyName), IReadOnlyDictionary<int, string>> EnumLabelsByField =
         new Dictionary<(Type, string), IReadOnlyDictionary<int, string>>
         {
-            [(typeof(ApproachLightSystem), nameof(ApproachLightSystem.SystemType))] = ApproachLightSystemLabels,
-            [(typeof(Runway), nameof(Runway.PrimaryLeftVasiType))] = VasiTypeLabels,
-            [(typeof(Runway), nameof(Runway.PrimaryRightVasiType))] = VasiTypeLabels,
-            [(typeof(Runway), nameof(Runway.SecondaryLeftVasiType))] = VasiTypeLabels,
-            [(typeof(Runway), nameof(Runway.SecondaryRightVasiType))] = VasiTypeLabels,
             [(typeof(Frequency), nameof(Frequency.Type))] = FrequencyTypeLabels,
             [(typeof(TaxiParkingSpot), nameof(TaxiParkingSpot.Type))] = TaxiParkingTypeLabels,
             [(typeof(TaxiParkingSpot), nameof(TaxiParkingSpot.NameCode))] = TaxiParkingNameLabels,
@@ -176,7 +164,11 @@ public static class AirportDataTreeBuilder
         Runway r => $"[{index}] {r.PrimaryDesignation}/{r.SecondaryDesignation}",
         Frequency f => $"[{index}] {f.Name}",
         TaxiParkingSpot p => $"[{index}] #{p.Number}",
-        TaxiPathSegment t => $"[{index}] {(string.IsNullOrEmpty(t.Name) ? $"(unnamed, type {t.Type})" : t.Name)}",
+        // Can't resolve TaxiNameId to its actual string here — this raw
+        // inspector has no AirportDetails.TaxiNames in scope at this call
+        // site, same as how StartIndex/EndIndex show as raw indices rather
+        // than resolved coordinates elsewhere in this tree.
+        TaxiPathSegment t => $"[{index}] {(t.TaxiNameId is { } id ? $"(named, id {id:N})" : $"(unnamed, type {t.Type})")}",
         Jetway j => $"[{index}] Jetway {j.JetwayObjectId}",
         _ => $"[{index}]",
     };

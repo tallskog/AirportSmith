@@ -15,20 +15,23 @@ public class Runway
     // kept raw until worth mapping to friendly labels.
     public int SurfaceType { get; set; }
 
+    // RUNWAY.EDGE_LIGHTS per the SDK docs — always present (not a "not
+    // installed" sentinel like the VASI/approach-light fields below), so
+    // this is a plain non-nullable enum defaulting to None.
+    public RunwayLightIntensity EdgeLightIntensity { get; set; }
+
     // VASI/PAPI light data per runway end/side, from the RUNWAY facility type's
     // four nested VASI slots. Null means no VASI/PAPI installed for that
     // end/side — confirmed against a live sim that SimConnect reports this as
     // Type 0 (with a meaningless default Angle) rather than omitting the row,
-    // and SimConnectService maps that to null here. Type is otherwise
-    // enum-backed (1-13) per SimConnect; kept raw for the same reason as
-    // SurfaceType above.
-    public int? PrimaryLeftVasiType { get; set; }
+    // and SimConnectService maps that to null here.
+    public VasiType? PrimaryLeftVasiType { get; set; }
     public double? PrimaryLeftVasiAngleDeg { get; set; }
-    public int? PrimaryRightVasiType { get; set; }
+    public VasiType? PrimaryRightVasiType { get; set; }
     public double? PrimaryRightVasiAngleDeg { get; set; }
-    public int? SecondaryLeftVasiType { get; set; }
+    public VasiType? SecondaryLeftVasiType { get; set; }
     public double? SecondaryLeftVasiAngleDeg { get; set; }
-    public int? SecondaryRightVasiType { get; set; }
+    public VasiType? SecondaryRightVasiType { get; set; }
     public double? SecondaryRightVasiAngleDeg { get; set; }
 
     // RUNWAY's six nested PAVEMENT sub-structures (PRIMARY_THRESHOLD/

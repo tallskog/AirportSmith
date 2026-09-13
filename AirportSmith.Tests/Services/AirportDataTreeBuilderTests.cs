@@ -46,7 +46,7 @@ public class AirportDataTreeBuilderTests
         {
             PrimaryDesignation = "09L",
             SecondaryDesignation = "27R",
-            PrimaryApproachLights = new ApproachLightSystem(SystemType: 7),
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Alsf2),
         });
 
         var tree = AirportDataTreeBuilder.Build(airport);
@@ -55,14 +55,13 @@ public class AirportDataTreeBuilderTests
         var approachLights = Find(runway.Children, "PrimaryApproachLights");
         Assert.Equal("PrimaryApproachLights", approachLights.Text);
         var systemType = Assert.Single(approachLights.Children);
-        Assert.Equal("SystemType: 7 (ALSF2)", systemType.Text);
+        Assert.Equal("SystemType: Alsf2", systemType.Text);
     }
 
     [Theory]
-    [InlineData(0, "SystemType: 0 (NONE)")]
-    [InlineData(9, "SystemType: 9 (CALVERT)")]
-    [InlineData(999, "SystemType: 999")]
-    public void Build_ApproachLightSystemType_AppendsDocumentedLabel_OrPlainNumberIfUnrecognized(int systemType, string expectedText)
+    [InlineData(ApproachLightSystemType.Calvert, "SystemType: Calvert")]
+    [InlineData((ApproachLightSystemType)999, "SystemType: 999")]
+    public void Build_ApproachLightSystemType_RendersEnumName_OrPlainNumberIfUnrecognized(ApproachLightSystemType systemType, string expectedText)
     {
         var airport = new AirportDetails();
         airport.Runways.Add(new Runway { PrimaryApproachLights = new ApproachLightSystem(systemType) });
@@ -75,15 +74,15 @@ public class AirportDataTreeBuilderTests
     }
 
     [Fact]
-    public void Build_VasiType_AppendsDocumentedLabel()
+    public void Build_VasiType_RendersEnumName()
     {
         var airport = new AirportDetails();
-        airport.Runways.Add(new Runway { PrimaryLeftVasiType = 7, PrimaryLeftVasiAngleDeg = 3.0 });
+        airport.Runways.Add(new Runway { PrimaryLeftVasiType = VasiType.Papi2, PrimaryLeftVasiAngleDeg = 3.0 });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var runway = Find(Find(tree, "Runways").Children, "[1]");
-        Assert.Equal("PrimaryLeftVasiType: 7 (PAPI2)", Find(runway.Children, "PrimaryLeftVasiType").Text);
+        Assert.Equal("PrimaryLeftVasiType: Papi2", Find(runway.Children, "PrimaryLeftVasiType").Text);
     }
 
     [Fact]
@@ -117,7 +116,7 @@ public class AirportDataTreeBuilderTests
     public void Build_TaxiPathSegmentType_AppendsDocumentedLabel()
     {
         var airport = new AirportDetails();
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, Name = "A" });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4 });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 
@@ -172,12 +171,25 @@ public class AirportDataTreeBuilderTests
     public void Build_TaxiPathSegment_UnnamedSegment_LabelFallsBackToTypeNotBlankName()
     {
         var airport = new AirportDetails();
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, Name = "" });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, TaxiNameId = null });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
         Assert.Equal("[1] (unnamed, type 4)", segment.Text);
+    }
+
+    [Fact]
+    public void Build_TaxiPathSegment_NamedSegment_LabelShowsTaxiNameId()
+    {
+        var nameId = Guid.NewGuid();
+        var airport = new AirportDetails();
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, TaxiNameId = nameId });
+
+        var tree = AirportDataTreeBuilder.Build(airport);
+
+        var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
+        Assert.Equal($"[1] (named, id {nameId:N})", segment.Text);
     }
 
     [Fact]

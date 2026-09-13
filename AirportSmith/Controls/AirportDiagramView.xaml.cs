@@ -16,6 +16,19 @@ namespace AirportSmith.Controls;
 // mid-drag.
 public partial class AirportDiagramView : UserControl
 {
+    // Bound only by the Edit tab's instance of this control (the read-only
+    // Diagram tab leaves it unset) — see TaxiwayShape_MouseLeftButtonDown for
+    // why leaving it null preserves that tab's existing pan-everywhere
+    // behavior unchanged.
+    public static readonly DependencyProperty TaxiwayClickCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwayClickCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwayClickCommand
+    {
+        get => (ICommand?)GetValue(TaxiwayClickCommandProperty);
+        set => SetValue(TaxiwayClickCommandProperty, value);
+    }
+
     private const double ZoomStep = 1.15;
 
     // Zoom limits are relative to the fit-to-view scale rather than absolute,
@@ -112,5 +125,23 @@ public partial class AirportDiagramView : UserControl
         _isPanning = false;
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
+    }
+
+    // Wired on the taxiway pavement-band Polygon in the DataTemplate (the
+    // wider hit target — the centerline Line is a friendlier visual but too
+    // thin to click reliably). Only marks the event Handled — suppressing the
+    // root's pan-start above, since this fires first during bubbling — when
+    // TaxiwayClickCommand is actually bound, so the read-only Diagram tab
+    // (which never binds it) keeps its current behavior of panning even when
+    // the drag starts on top of a taxiway.
+    private void TaxiwayShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TaxiwayClickCommand is null) return;
+        if (sender is not FrameworkElement { DataContext: TaxiwaySegmentShape shape }) return;
+
+        var request = new TaxiwaySelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        if (TaxiwayClickCommand.CanExecute(request))
+            TaxiwayClickCommand.Execute(request);
+        e.Handled = true;
     }
 }

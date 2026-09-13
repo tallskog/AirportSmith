@@ -21,7 +21,11 @@ public partial class App : Application
         fileDialogService = new FileDialogService();
 #endif
 
-        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService);
+        // Unlike the Debug-only services above, project save/load is a real
+        // user-facing feature — always wired up.
+        var projectStore = new AirportProjectStore();
+
+        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore);
         var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();
