@@ -40,6 +40,61 @@ public class TaxiPathEditViewModel : ViewModelBase
             TaxiNameId = null;
     }
 
+    public TaxiPathType Type
+    {
+        get => _segment.Type;
+        set
+        {
+            if (_segment.Type == value) return;
+            _segment.Type = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public int RunwayNumber
+    {
+        get => _segment.RunwayNumber;
+        set
+        {
+            if (_segment.RunwayNumber == value) return;
+            _segment.RunwayNumber = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public TaxiPathRunwayDesignator RunwayDesignator
+    {
+        get => _segment.RunwayDesignator;
+        set
+        {
+            if (_segment.RunwayDesignator == value) return;
+            _segment.RunwayDesignator = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public TaxiEdgeType LeftEdge
+    {
+        get => _segment.LeftEdge;
+        set
+        {
+            if (_segment.LeftEdge == value) return;
+            _segment.LeftEdge = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public TaxiEdgeType RightEdge
+    {
+        get => _segment.RightEdge;
+        set
+        {
+            if (_segment.RightEdge == value) return;
+            _segment.RightEdge = value;
+            OnPropertyChanged();
+        }
+    }
+
     public bool LeftEdgeLighted
     {
         get => _segment.LeftEdgeLighted;
@@ -58,6 +113,28 @@ public class TaxiPathEditViewModel : ViewModelBase
         {
             if (_segment.RightEdgeLighted == value) return;
             _segment.RightEdgeLighted = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CenterLine
+    {
+        get => _segment.CenterLine;
+        set
+        {
+            if (_segment.CenterLine == value) return;
+            _segment.CenterLine = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CenterLineLighted
+    {
+        get => _segment.CenterLineLighted;
+        set
+        {
+            if (_segment.CenterLineLighted == value) return;
+            _segment.CenterLineLighted = value;
             OnPropertyChanged();
         }
     }

@@ -29,7 +29,34 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(TaxiwayClickCommandProperty, value);
     }
 
+    // Fired by a plain click (no drag) on empty diagram space — see EndPan.
+    // Same Edit-tab-only null-guard convention as TaxiwayClickCommand.
+    public static readonly DependencyProperty TaxiwayClearSelectionCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwayClearSelectionCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwayClearSelectionCommand
+    {
+        get => (ICommand?)GetValue(TaxiwayClearSelectionCommandProperty);
+        set => SetValue(TaxiwayClearSelectionCommandProperty, value);
+    }
+
+    // Fired by a right-click anywhere on the diagram — see OnMouseRightButtonDown.
+    // Same Edit-tab-only null-guard convention as TaxiwayClickCommand.
+    public static readonly DependencyProperty TaxiwayContextMenuCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwayContextMenuCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwayContextMenuCommand
+    {
+        get => (ICommand?)GetValue(TaxiwayContextMenuCommandProperty);
+        set => SetValue(TaxiwayContextMenuCommandProperty, value);
+    }
+
     private const double ZoomStep = 1.15;
+
+    // A mouse-down/mouse-up pair with less movement than this (device-
+    // independent pixels) between them counts as a click rather than a
+    // pan-drag, for the empty-space-click-clears-selection behavior below.
+    private const double ClickMaxDragDistance = 3;
 
     // Zoom limits are relative to the fit-to-view scale rather than absolute,
     // so they behave the same for a small field and a large international
@@ -114,17 +141,44 @@ public partial class AirportDiagramView : UserControl
         _userAdjustedView = true;
     }
 
-    private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndPan();
+    private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndPan(e);
 
-    private void OnLostMouseCapture(object sender, MouseEventArgs e) => EndPan();
+    // Mouse-capture loss (e.g. alt-tab mid-drag) isn't a click, so no
+    // MouseButtonEventArgs is available here to check drag distance —
+    // deliberately passes null rather than treating capture loss as a click.
+    private void OnLostMouseCapture(object sender, MouseEventArgs e) => EndPan(null);
 
-    private void EndPan()
+    private void EndPan(MouseButtonEventArgs? e)
     {
         if (!_isPanning) return;
+
+        // _isPanning is only ever set true by OnMouseLeftButtonDown on THIS
+        // control (the root) — a mouse-down that instead landed on a taxiway
+        // shape is marked Handled by TaxiwayShape_MouseLeftButtonDown before
+        // it gets here (see that handler's own comment), so _isPanning stays
+        // false and this whole method is a no-op for a taxiway click. So
+        // reaching here with minimal movement means empty diagram space was
+        // clicked, not dragged — clear the Edit tab's taxiway selection.
+        var wasBackgroundClick = e != null && (e.GetPosition(this) - _panStart).Length <= ClickMaxDragDistance;
 
         _isPanning = false;
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
+
+        if (wasBackgroundClick && TaxiwayClearSelectionCommand?.CanExecute(null) == true)
+            TaxiwayClearSelectionCommand.Execute(null);
+    }
+
+    // Right-click opens the Edit tab's batch-edit popover for whatever's
+    // currently selected — it never changes the selection itself, regardless
+    // of what's directly under the cursor (a taxiway or empty space), so no
+    // per-shape wiring is needed the way TaxiwayShape_MouseLeftButtonDown
+    // needs for left-click; this root-level handler covers the whole canvas.
+    private void OnMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TaxiwayContextMenuCommand?.CanExecute(null) == true)
+            TaxiwayContextMenuCommand.Execute(null);
+        e.Handled = true;
     }
 
     // Wired on the taxiway pavement-band Polygon in the DataTemplate (the

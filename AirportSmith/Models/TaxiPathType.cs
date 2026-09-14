@@ -1,18 +1,19 @@
 namespace AirportSmith.Models;
 
-// Maps TAXI_PATH.TYPE (TaxiPathSegment.Type) per the SDK's Facility Data
-// reference. UNCONFIRMED against a live sim — verify the raw int values
-// actually observed before trusting this exact label-to-int mapping, same
-// discipline already applied to other previously-guessed fields in this
-// project. One real data point so far: the OIBK export pulled earlier this
-// project (479 taxi path segments) had Type == 4 on every single row, no
-// other value observed — consistent with 4 meaning "taxi"/"path" here
-// (AirportDiagramProjector treats both Taxi and Path as drawable, so this
-// value is covered either way), but not proof of what every other value
-// means. Used only by AirportDiagramProjector to decide what counts as a
-// drawable taxiway centerline (as opposed to a runway/parking/closed path
-// row) — kept out of SimConnectService/TaxiPathSegment.Type itself, which
-// stays a raw int.
+// Maps TAXI_PATH.TYPE (TaxiPathSegment.Type). Confirmed directly against the
+// local MSFS 2024 SDK docs' full 0-8 enumeration (the same source consulted
+// for the Edit tab's left/right-edge/runway-association fields — see
+// TaxiPathSegment.cs) — this now matches AirportDataTreeBuilder's
+// independently-transcribed TaxiPathTypeLabels dictionary exactly, which is
+// how the gap (this enum previously stopped at 6, missing ROAD/PAINTEDLINE)
+// was caught. One real data point on plausibility: the OIBK export pulled
+// earlier in this project (479 taxi path segments) had Type == Path on every
+// single row, no other value observed — consistent with Path/Taxi being the
+// common "drawable taxiway" values (AirportDiagramProjector treats both as
+// drawable), but not proof of what every other value looks like in practice.
+// TaxiPathSegment.Type is this enum directly (not a raw int with a separate
+// label dictionary) since it's now a user-facing Edit tab picker value, same
+// promotion VasiType/ApproachLightSystemType went through.
 public enum TaxiPathType
 {
     Unknown = 0,
@@ -22,4 +23,6 @@ public enum TaxiPathType
     Path = 4,
     Closed = 5,
     Vehicle = 6,
+    Road = 7,
+    PaintedLine = 8,
 }

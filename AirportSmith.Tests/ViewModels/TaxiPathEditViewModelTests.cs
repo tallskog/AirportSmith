@@ -36,6 +36,41 @@ public class TaxiPathEditViewModelTests
     }
 
     [Fact]
+    public void SettingTypeRunwayAssociationAndEdgeFields_WritesThroughToWrappedSegment()
+    {
+        var segment = new TaxiPathSegment();
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.Type = TaxiPathType.Runway;
+        vm.RunwayNumber = 9;
+        vm.RunwayDesignator = TaxiPathRunwayDesignator.Left;
+        vm.LeftEdge = TaxiEdgeType.Solid;
+        vm.RightEdge = TaxiEdgeType.Dashed;
+        vm.CenterLine = true;
+        vm.CenterLineLighted = true;
+
+        Assert.Equal(TaxiPathType.Runway, segment.Type);
+        Assert.Equal(9, segment.RunwayNumber);
+        Assert.Equal(TaxiPathRunwayDesignator.Left, segment.RunwayDesignator);
+        Assert.Equal(TaxiEdgeType.Solid, segment.LeftEdge);
+        Assert.Equal(TaxiEdgeType.Dashed, segment.RightEdge);
+        Assert.True(segment.CenterLine);
+        Assert.True(segment.CenterLineLighted);
+    }
+
+    [Fact]
+    public void SettingSameTypeValue_DoesNotRaisePropertyChanged()
+    {
+        var vm = new TaxiPathEditViewModel(new TaxiPathSegment { Type = TaxiPathType.Taxi });
+        var raised = false;
+        vm.PropertyChanged += (_, _) => raised = true;
+
+        vm.Type = TaxiPathType.Taxi;
+
+        Assert.False(raised);
+    }
+
+    [Fact]
     public void SettingSameValue_DoesNotRaisePropertyChanged()
     {
         var nameId = Guid.NewGuid();

@@ -113,15 +113,52 @@ public class AirportDataTreeBuilderTests
     }
 
     [Fact]
-    public void Build_TaxiPathSegmentType_AppendsDocumentedLabel()
+    public void Build_TaxiPathSegmentType_RendersEnumName()
     {
+        // TaxiPathSegment.Type is a real enum (TaxiPathType), not a raw int
+        // with a label dictionary — same promotion VasiType/
+        // ApproachLightSystemType went through, so no lookup is needed here;
+        // see Build_ApproachLightSystemType_RendersEnumName_OrPlainNumberIfUnrecognized.
         var airport = new AirportDetails();
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Path });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
-        Assert.Equal("Type: 4 (PATH)", Find(segment.Children, "Type").Text);
+        Assert.Equal("Type: Path", Find(segment.Children, "Type").Text);
+    }
+
+    [Fact]
+    public void Build_TaxiPathSegmentRunwayNumber_AppendsDocumentedLabel()
+    {
+        var airport = new AirportDetails();
+        airport.TaxiPaths.Add(new TaxiPathSegment { RunwayNumber = 39 });
+
+        var tree = AirportDataTreeBuilder.Build(airport);
+
+        var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
+        Assert.Equal("RunwayNumber: 39 (EAST)", Find(segment.Children, "RunwayNumber").Text);
+    }
+
+    [Fact]
+    public void Build_TaxiPathSegmentRunwayDesignatorLeftEdgeRightEdge_RenderEnumNames()
+    {
+        var airport = new AirportDetails();
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            RunwayDesignator = TaxiPathRunwayDesignator.Left,
+            LeftEdge = TaxiEdgeType.Solid,
+            RightEdge = TaxiEdgeType.Dashed,
+        });
+
+        var tree = AirportDataTreeBuilder.Build(airport);
+
+        var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
+        Assert.Equal("RunwayDesignator: Left", Find(segment.Children, "RunwayDesignator").Text);
+        // "LeftEdge"/"RightEdge" prefixes would also match LeftEdgeLighted/
+        // RightEdgeLighted — include the colon to disambiguate.
+        Assert.Equal("LeftEdge: Solid", Find(segment.Children, "LeftEdge:").Text);
+        Assert.Equal("RightEdge: Dashed", Find(segment.Children, "RightEdge:").Text);
     }
 
     [Fact]
@@ -171,12 +208,12 @@ public class AirportDataTreeBuilderTests
     public void Build_TaxiPathSegment_UnnamedSegment_LabelFallsBackToTypeNotBlankName()
     {
         var airport = new AirportDetails();
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, TaxiNameId = null });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Path, TaxiNameId = null });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var segment = Find(Find(tree, "TaxiPaths").Children, "[1]");
-        Assert.Equal("[1] (unnamed, type 4)", segment.Text);
+        Assert.Equal("[1] (unnamed, type Path)", segment.Text);
     }
 
     [Fact]
@@ -184,7 +221,7 @@ public class AirportDataTreeBuilderTests
     {
         var nameId = Guid.NewGuid();
         var airport = new AirportDetails();
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = 4, TaxiNameId = nameId });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Path, TaxiNameId = nameId });
 
         var tree = AirportDataTreeBuilder.Build(airport);
 

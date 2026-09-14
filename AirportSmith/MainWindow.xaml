@@ -93,10 +93,15 @@
                      into the loaded Airport; Save Project persists it via
                      IAirportProjectStore. The diagram on the right (a second,
                      independent AirportDiagramView instance — see its own
-                     TaxiwayClickCommand doc comment) gives spatial context for
-                     which taxi path is which and drives the batch-edit popover:
-                     click one or more taxiways there (Ctrl+click to extend the
-                     selection) to edit their name/lighting together. -->
+                     TaxiwayClickCommand/TaxiwayClearSelectionCommand/
+                     TaxiwayContextMenuCommand doc comments) gives spatial context
+                     for which taxi path is which and drives the Taxi Paths grid's
+                     filtering: click one or more taxiways there (Ctrl+click to
+                     extend the selection) to filter the grid below down to just
+                     the selected path(s) — a plain click on empty diagram space
+                     clears the selection, showing every path again. Right-click
+                     the diagram with a selection active to open a popover and
+                     batch-edit the selected path(s)' name/lighting together. -->
                 <Grid Margin="10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="520"/>
@@ -167,14 +172,18 @@
                                     Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
                             <TextBlock Text="Taxi Paths" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <!-- Selecting one or more rows here highlights the matching taxiway(s)
-                                 in the diagram for spatial context — see SelectionChanged's
-                                 code-behind handler and MainViewModel.SyncTaxiwaySelectionFromRows.
-                                 Deliberately doesn't open the batch-edit popover (that's reserved for
-                                 selecting via the diagram itself — see ShowTaxiwayBatchEditPopover). -->
+                            <!-- Bound to VisibleTaxiPathEdits, not TaxiPathEdits — a diagram click
+                                 filters this down to just the clicked path(s); with nothing selected on
+                                 the diagram it shows every path (see MainViewModel.RefreshTaxiwayFilter).
+                                 Selecting one or more rows here (independent of that filtering) also
+                                 highlights the matching taxiway(s) in the diagram for spatial context —
+                                 see SelectionChanged's code-behind handler and
+                                 MainViewModel.SyncTaxiwaySelectionFromRows. Deliberately doesn't open the
+                                 batch-edit popover — that only opens via a right-click on the diagram
+                                 (see ShowTaxiwayBatchEditPopover/OpenTaxiwayBatchEditCommand). -->
                             <DataGrid x:Name="TaxiPathsGrid" Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
                                       SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TaxiPathsGrid_SelectionChanged"
-                                      ItemsSource="{Binding DataContext.TaxiPathEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                                      ItemsSource="{Binding DataContext.VisibleTaxiPathEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
                                     <!-- DataGridCheckBoxColumn's rendered checkbox isn't interactive
                                          until its cell becomes "current" (selected) — a well-known WPF
@@ -198,6 +207,31 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Type" Width="90">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathTypes}"
+                                                          SelectedItem="{Binding Type, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Rwy #" Width="55" Binding="{Binding RunwayNumber, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTemplateColumn Header="Rwy Designator" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathRunwayDesignators}"
+                                                          SelectedItem="{Binding RunwayDesignator, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Left Edge" Width="95">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypes}"
+                                                          SelectedItem="{Binding LeftEdge, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTemplateColumn Header="Left Edge Lighted" Width="120">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
@@ -205,10 +239,32 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Right Edge" Width="95">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypes}"
+                                                          SelectedItem="{Binding RightEdge, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTemplateColumn Header="Right Edge Lighted" Width="120">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding RightEdgeLighted, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Center Line" Width="90">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" IsChecked="{Binding CenterLine, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Center Line Lighted" Width="125">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" IsChecked="{Binding CenterLineLighted, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
@@ -296,7 +352,9 @@
                     <Grid Grid.Column="1" x:Name="EditDiagramHost">
                         <controls:AirportDiagramView
                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
-                            TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwayClearSelectionCommand="{Binding DataContext.ClearTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
                         <!-- Batch-edit popover for the diagram's multi-select — DataContext is
                              bound directly on the Popup element itself (not inside its Child),

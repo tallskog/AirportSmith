@@ -172,15 +172,20 @@ public class SimConnectService : ISimConnectService
     // between sub-types isn't guaranteed, so resolution can't happen inline).
     // An earlier revision requested a "NAME" field that doesn't exist on
     // TAXI_PATH itself, corrupting every subsequent field. WIDTH is FLOAT32.
-    // LEFT_EDGE_LIGHTED/RIGHT_EDGE_LIGHTED are INT32 bools (default 0/false)
-    // per the SDK docs, inserted here (right after WIDTH, before START/END)
-    // to match the request order added in RegisterFacilityDefinition.
+    // RUNWAY_NUMBER/RUNWAY_DESIGNATOR/LEFT_EDGE/LEFT_EDGE_LIGHTED/RIGHT_EDGE/
+    // RIGHT_EDGE_LIGHTED/CENTER_LINE/CENTER_LINE_LIGHTED are all INT32 (bools
+    // among them use the SDK's usual 0/false convention) — field order here
+    // must match the request order added in RegisterFacilityDefinition
+    // exactly, which in turn follows the SDK docs' own TAXI_PATH field order.
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct FacilityTaxiPathData
     {
         public int Type;
         public float Width;
-        public int LeftEdgeLighted, RightEdgeLighted;
+        public int RunwayNumber, RunwayDesignator;
+        public int LeftEdge, LeftEdgeLighted;
+        public int RightEdge, RightEdgeLighted;
+        public int CenterLine, CenterLineLighted;
         public int Start, End;
         public uint NameIndex;
     }
@@ -454,8 +459,14 @@ public class SimConnectService : ISimConnectService
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN TAXI_PATH");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "WIDTH");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "RUNWAY_NUMBER");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "RUNWAY_DESIGNATOR");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LEFT_EDGE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "LEFT_EDGE_LIGHTED");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "RIGHT_EDGE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "RIGHT_EDGE_LIGHTED");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CENTER_LINE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CENTER_LINE_LIGHTED");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "START");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "END");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "NAME_INDEX");
@@ -686,12 +697,18 @@ public class SimConnectService : ISimConnectService
                 var t = (FacilityTaxiPathData)data.Data[0];
                 pending.Details.TaxiPaths.Add(new TaxiPathSegment
                 {
-                    Type = t.Type,
+                    Type = (TaxiPathType)t.Type,
                     StartIndex = t.Start,
                     EndIndex = t.End,
                     WidthMeters = t.Width,
+                    RunwayNumber = t.RunwayNumber,
+                    RunwayDesignator = (TaxiPathRunwayDesignator)t.RunwayDesignator,
+                    LeftEdge = (TaxiEdgeType)t.LeftEdge,
+                    RightEdge = (TaxiEdgeType)t.RightEdge,
                     LeftEdgeLighted = t.LeftEdgeLighted != 0,
                     RightEdgeLighted = t.RightEdgeLighted != 0,
+                    CenterLine = t.CenterLine != 0,
+                    CenterLineLighted = t.CenterLineLighted != 0,
                 });
                 // Kept parallel to Details.TaxiPaths (same add order); resolved
                 // against TaxiNames in OnFacilityDataEnd once all rows are in.

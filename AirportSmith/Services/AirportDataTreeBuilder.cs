@@ -100,11 +100,13 @@ public static class AirportDataTreeBuilder
     // all (a real gap in the SDK's own documentation, not a lookup we missed)
     // — inventing a label list for it would risk showing a wrong or
     // misleading name, worse than showing the honest raw number.
-    // ApproachLightSystem.SystemType and Runway.*VasiType used to have label
-    // dictionaries here, back when they were raw ints — now that they're real
-    // enums (ApproachLightSystemType/VasiType), IsLeafType/FormatLeaf's
-    // default value.ToString() already renders the member name (e.g.
-    // "Papi4") with no lookup needed.
+    // ApproachLightSystem.SystemType, Runway.*VasiType, and
+    // TaxiPathSegment.Type/RunwayDesignator/LeftEdge/RightEdge used to have
+    // (or, for Type, would otherwise need) label dictionaries here — now
+    // that they're real enums (ApproachLightSystemType/VasiType/
+    // TaxiPathType/TaxiPathRunwayDesignator/TaxiEdgeType),
+    // IsLeafType/FormatLeaf's default value.ToString() already renders the
+    // member name (e.g. "Papi4") with no lookup needed.
 
     private static readonly IReadOnlyDictionary<int, string> FrequencyTypeLabels = new Dictionary<int, string>
     {
@@ -139,10 +141,16 @@ public static class AirportDataTreeBuilder
         return labels;
     }
 
-    private static readonly IReadOnlyDictionary<int, string> TaxiPathTypeLabels = new Dictionary<int, string>
+    // TAXI_PATH.RUNWAY_NUMBER's documented range is 0 (none), 1-36 (literal
+    // runway numbers — self-explanatory as plain numbers, no label needed),
+    // then a small non-numeric tail: compass headings for helipad-associated
+    // paths, plus a 45 (LAST) bounds sentinel — labelled here the same way
+    // TaxiParkingSpot.NameCode's GATE_A..GATE_Z tail is, rather than via a
+    // dedicated enum type (see TaxiPathSegment.RunwayNumber's doc comment).
+    private static readonly IReadOnlyDictionary<int, string> TaxiPathRunwayNumberLabels = new Dictionary<int, string>
     {
-        [0] = "NONE", [1] = "TAXI", [2] = "RUNWAY", [3] = "PARKING", [4] = "PATH", [5] = "CLOSED",
-        [6] = "VEHICLE", [7] = "ROAD", [8] = "PAINTEDLINE",
+        [0] = "NONE", [37] = "NORTH", [38] = "NORTHEAST", [39] = "EAST", [40] = "SOUTHEAST",
+        [41] = "SOUTH", [42] = "SOUTHWEST", [43] = "WEST", [44] = "NORTHWEST", [45] = "LAST",
     };
 
     private static readonly IReadOnlyDictionary<(Type OwnerType, string PropertyName), IReadOnlyDictionary<int, string>> EnumLabelsByField =
@@ -152,7 +160,7 @@ public static class AirportDataTreeBuilder
             [(typeof(TaxiParkingSpot), nameof(TaxiParkingSpot.Type))] = TaxiParkingTypeLabels,
             [(typeof(TaxiParkingSpot), nameof(TaxiParkingSpot.NameCode))] = TaxiParkingNameLabels,
             [(typeof(TaxiParkingSpot), nameof(TaxiParkingSpot.SuffixCode))] = TaxiParkingNameLabels,
-            [(typeof(TaxiPathSegment), nameof(TaxiPathSegment.Type))] = TaxiPathTypeLabels,
+            [(typeof(TaxiPathSegment), nameof(TaxiPathSegment.RunwayNumber))] = TaxiPathRunwayNumberLabels,
         };
 
     // A short label for a list item's own node, so e.g. Runways[1] reads as

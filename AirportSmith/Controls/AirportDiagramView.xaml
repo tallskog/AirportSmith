@@ -4,6 +4,7 @@
              MouseWheel="OnMouseWheel"
              MouseLeftButtonDown="OnMouseLeftButtonDown"
              MouseLeftButtonUp="OnMouseLeftButtonUp"
+             MouseRightButtonDown="OnMouseRightButtonDown"
              MouseMove="OnMouseMove"
              LostMouseCapture="OnLostMouseCapture">
 

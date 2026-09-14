@@ -412,7 +412,7 @@ public class AirportDiagramProjectorTests
             a.TaxiNames.Add(taxiName);
             a.TaxiPaths.Add(new TaxiPathSegment
             {
-                Type = (int)TaxiPathType.Taxi,
+                Type = TaxiPathType.Taxi,
                 TaxiNameId = taxiName.Id,
                 StartXMeters = 0,
                 StartZMeters = 0,
@@ -450,7 +450,7 @@ public class AirportDiagramProjectorTests
     {
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi,
+            Type = TaxiPathType.Taxi,
             TaxiNameId = null,
             StartXMeters = 0,
             StartZMeters = 0,
@@ -471,7 +471,7 @@ public class AirportDiagramProjectorTests
         // crash or a stale label.
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi,
+            Type = TaxiPathType.Taxi,
             TaxiNameId = Guid.NewGuid(),
             StartXMeters = 0,
             StartZMeters = 0,
@@ -489,7 +489,7 @@ public class AirportDiagramProjectorTests
     {
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Runway,
+            Type = TaxiPathType.Runway,
             StartXMeters = 0,
             StartZMeters = 0,
             EndXMeters = 200,
@@ -506,7 +506,7 @@ public class AirportDiagramProjectorTests
     {
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi,
+            Type = TaxiPathType.Taxi,
             StartXMeters = null,
             StartZMeters = null,
             EndXMeters = 200,
@@ -528,8 +528,8 @@ public class AirportDiagramProjectorTests
         // tab's diagram click map a shape back to the right TaxiPathEditViewModel.
         var airport = Airport(a =>
         {
-            a.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Runway, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
-            a.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Taxi, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
+            a.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Runway, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+            a.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
         });
 
         var diagram = AirportDiagramProjector.Project(airport);

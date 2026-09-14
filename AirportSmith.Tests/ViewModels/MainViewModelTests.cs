@@ -26,12 +26,12 @@ public class MainViewModelTests
         airport.TaxiNames.Add(name2);
         airport.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi, TaxiNameId = name1.Id, WidthMeters = 10,
+            Type = TaxiPathType.Taxi, TaxiNameId = name1.Id, WidthMeters = 10,
             StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0,
         });
         airport.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi, TaxiNameId = name2.Id, WidthMeters = 10,
+            Type = TaxiPathType.Taxi, TaxiNameId = name2.Id, WidthMeters = 10,
             StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0,
         });
         return airport;
@@ -563,8 +563,8 @@ public class MainViewModelTests
         airport.TaxiNames.Add(name1);
         // Both paths share name1 — the exact relationship a flat per-segment
         // string used to break.
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Taxi, TaxiNameId = name1.Id, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
-        airport.TaxiPaths.Add(new TaxiPathSegment { Type = (int)TaxiPathType.Taxi, TaxiNameId = name1.Id, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = name1.Id, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = name1.Id, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
         var vm = CreateViewModelWithAirport(airport);
 
         vm.TaxiNames.Single(n => n.Id == name1.Id).Value = "Alpha";
@@ -629,8 +629,13 @@ public class MainViewModelTests
         Assert.False(vm.ShowTaxiwayBatchEditPopover);
     }
 
+    // A left-click on the diagram (ToggleTaxiwaySelectionCommand) only builds
+    // the selection and filters the grid — it no longer opens the popover on
+    // its own; only an explicit right-click (OpenTaxiwayBatchEditCommand)
+    // does that. See ClickingDiagramTaxiway_FiltersVisibleTaxiPathEditsToSelection
+    // for the filtering half of this behavior.
     [Fact]
-    public void ToggleTaxiwaySelectionCommand_UnlikeGridRowSelection_OpensPopover()
+    public void ToggleTaxiwaySelectionCommand_AloneDoesNotOpenPopover()
     {
         var airport = BuildAirportWithTwoTaxiways(out _, out _);
         var vm = CreateViewModelWithAirport(airport);
@@ -638,7 +643,70 @@ public class MainViewModelTests
 
         vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
 
+        Assert.True(vm.HasTaxiwaySelection);
+        Assert.False(vm.ShowTaxiwayBatchEditPopover);
+    }
+
+    [Fact]
+    public void OpenTaxiwayBatchEditCommand_WithADiagramSelection_OpensPopover()
+    {
+        var airport = BuildAirportWithTwoTaxiways(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        var shape0 = vm.Diagram!.TaxiwaySegments[0];
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+
+        vm.OpenTaxiwayBatchEditCommand.Execute(null);
+
         Assert.True(vm.ShowTaxiwayBatchEditPopover);
+    }
+
+    [Fact]
+    public void OpenTaxiwayBatchEditCommand_WithNoSelection_CanExecuteIsFalse()
+    {
+        var airport = BuildAirportWithTwoTaxiways(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+
+        Assert.False(vm.OpenTaxiwayBatchEditCommand.CanExecute(null));
+    }
+
+    // The core of this feature: clicking a taxiway in the diagram filters the
+    // Taxi Paths grid down to just that path, Ctrl+click extends the filter
+    // to every selected path, and clearing the selection (background click,
+    // via ClearTaxiwaySelectionCommand) shows every path again.
+    [Fact]
+    public void ClickingDiagramTaxiway_FiltersVisibleTaxiPathEditsToSelection()
+    {
+        var airport = BuildAirportWithTwoTaxiways(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        var shape0 = vm.Diagram!.TaxiwaySegments[0];
+        var shape1 = vm.Diagram!.TaxiwaySegments[1];
+
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        Assert.Equal(vm.TaxiPathEdits[0], Assert.Single(vm.VisibleTaxiPathEdits));
+
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape1, ExtendSelection: true));
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+        Assert.Contains(vm.TaxiPathEdits[0], vm.VisibleTaxiPathEdits);
+        Assert.Contains(vm.TaxiPathEdits[1], vm.VisibleTaxiPathEdits);
+
+        vm.ClearTaxiwaySelectionCommand.Execute(null);
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+        Assert.False(vm.HasTaxiwaySelection);
+    }
+
+    [Fact]
+    public void ClosingBatchEditPopover_ShowsEveryTaxiPathAgain()
+    {
+        var airport = BuildAirportWithTwoTaxiways(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        var shape0 = vm.Diagram!.TaxiwaySegments[0];
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.OpenTaxiwayBatchEditCommand.Execute(null);
+        Assert.Single(vm.VisibleTaxiPathEdits);
+
+        vm.CloseTaxiwayBatchEditCommand.Execute(null);
+
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
     }
 
     // Regression test for a reported bug: while a diagram-driven batch-edit
@@ -657,6 +725,7 @@ public class MainViewModelTests
         var shape0 = vm.Diagram!.TaxiwaySegments[0];
         var shape1 = vm.Diagram!.TaxiwaySegments[1];
         vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.OpenTaxiwayBatchEditCommand.Execute(null);
         Assert.True(vm.ShowTaxiwayBatchEditPopover);
 
         // Simulates an incidental grid click on the OTHER (unselected) row —
@@ -676,6 +745,7 @@ public class MainViewModelTests
         var shape0 = vm.Diagram!.TaxiwaySegments[0];
         var shape1 = vm.Diagram!.TaxiwaySegments[1];
         vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.OpenTaxiwayBatchEditCommand.Execute(null);
         vm.CloseTaxiwayBatchEditCommand.Execute(null);
         Assert.False(vm.ShowTaxiwayBatchEditPopover);
 
@@ -698,9 +768,12 @@ public class MainViewModelTests
         var shape0 = vm.Diagram!.TaxiwaySegments[0];
         var shape1 = vm.Diagram!.TaxiwaySegments[1];
         vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.OpenTaxiwayBatchEditCommand.Execute(null);
         vm.TaxiwayBatchEdit.TaxiNameId = name1.Id;
 
-        // Extend the selection to a second taxiway before applying.
+        // Extend the selection to a second taxiway before applying — the
+        // popover, already open from the right-click above, must stay open
+        // and keep its staged value.
         vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape1, ExtendSelection: true));
 
         Assert.True(vm.TaxiwayBatchEdit.IsTaxiNameIdTouched);
@@ -730,12 +803,12 @@ public class MainViewModelTests
         airport.TaxiNames.Add(name2);
         airport.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi, TaxiNameId = name1.Id, RightEdgeLighted = true,
+            Type = TaxiPathType.Taxi, TaxiNameId = name1.Id, RightEdgeLighted = true,
             StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0,
         });
         airport.TaxiPaths.Add(new TaxiPathSegment
         {
-            Type = (int)TaxiPathType.Taxi, TaxiNameId = name2.Id, RightEdgeLighted = false,
+            Type = TaxiPathType.Taxi, TaxiNameId = name2.Id, RightEdgeLighted = false,
             StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0,
         });
         var vm = CreateViewModelWithAirport(airport);

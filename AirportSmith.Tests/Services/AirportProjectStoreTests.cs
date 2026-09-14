@@ -27,7 +27,12 @@ public class AirportProjectStoreTests
             var taxiName = new TaxiName { Value = "A" };
             var airport = new AirportDetails { Icao = "EFHK", Name = "Helsinki-Vantaa" };
             airport.TaxiNames.Add(taxiName);
-            airport.TaxiPaths.Add(new TaxiPathSegment { TaxiNameId = taxiName.Id, LeftEdgeLighted = true, RightEdgeLighted = false });
+            airport.TaxiPaths.Add(new TaxiPathSegment
+            {
+                TaxiNameId = taxiName.Id, LeftEdgeLighted = true, RightEdgeLighted = false,
+                Type = TaxiPathType.Runway, RunwayNumber = 4, RunwayDesignator = TaxiPathRunwayDesignator.Left,
+                LeftEdge = TaxiEdgeType.Solid, RightEdge = TaxiEdgeType.Dashed, CenterLine = true, CenterLineLighted = true,
+            });
             airport.Runways.Add(new Runway
             {
                 PrimaryDesignation = "04L",
@@ -50,6 +55,13 @@ public class AirportProjectStoreTests
             Assert.Equal(loadedName.Id, taxiPath.TaxiNameId);
             Assert.True(taxiPath.LeftEdgeLighted);
             Assert.False(taxiPath.RightEdgeLighted);
+            Assert.Equal(TaxiPathType.Runway, taxiPath.Type);
+            Assert.Equal(4, taxiPath.RunwayNumber);
+            Assert.Equal(TaxiPathRunwayDesignator.Left, taxiPath.RunwayDesignator);
+            Assert.Equal(TaxiEdgeType.Solid, taxiPath.LeftEdge);
+            Assert.Equal(TaxiEdgeType.Dashed, taxiPath.RightEdge);
+            Assert.True(taxiPath.CenterLine);
+            Assert.True(taxiPath.CenterLineLighted);
             var runway = Assert.Single(loaded.Runways);
             Assert.Equal(RunwayLightIntensity.High, runway.EdgeLightIntensity);
             Assert.Equal(VasiType.Papi4, runway.PrimaryLeftVasiType);
@@ -101,7 +113,9 @@ public class AirportProjectStoreTests
     // System.Text.Json's default-value behavior holds — a hand-written "old"
     // (schema v1) file missing every field this feature added
     // (LeftEdgeLighted/RightEdgeLighted, EdgeLightIntensity, the
-    // VasiType-typed fields, ApproachLightSystem's enum-typed SystemType)
+    // VasiType-typed fields, ApproachLightSystem's enum-typed SystemType, and
+    // TaxiPathSegment's later Type/RunwayNumber/RunwayDesignator/LeftEdge/
+    // RightEdge/CenterLine/CenterLineLighted fields)
     // must still load cleanly. Its TaxiPaths[].Name (v1's free-text field,
     // unknown to the current TaxiPathSegment shape) also exercises the v1->v2
     // taxi-name migration — see MigrateLegacyTaxiNames_ tests below for that
@@ -134,6 +148,17 @@ public class AirportProjectStoreTests
             var taxiPath = Assert.Single(loaded!.TaxiPaths);
             Assert.False(taxiPath.LeftEdgeLighted);
             Assert.False(taxiPath.RightEdgeLighted);
+            // Type/RunwayNumber/RunwayDesignator/LeftEdge/RightEdge/CenterLine/
+            // CenterLineLighted are all newer than this old file too — missing
+            // from the JSON entirely, so must come back as their type default
+            // rather than throwing, same CLAUDE.md contract as the fields above.
+            Assert.Equal(TaxiPathType.Unknown, taxiPath.Type);
+            Assert.Equal(0, taxiPath.RunwayNumber);
+            Assert.Equal(TaxiPathRunwayDesignator.None, taxiPath.RunwayDesignator);
+            Assert.Equal(TaxiEdgeType.None, taxiPath.LeftEdge);
+            Assert.Equal(TaxiEdgeType.None, taxiPath.RightEdge);
+            Assert.False(taxiPath.CenterLine);
+            Assert.False(taxiPath.CenterLineLighted);
             var runway = Assert.Single(loaded.Runways);
             Assert.Equal(RunwayLightIntensity.None, runway.EdgeLightIntensity);
             Assert.Null(runway.PrimaryLeftVasiType);

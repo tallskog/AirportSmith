@@ -49,8 +49,11 @@ before deciding what to edit in a future version.
   primary/secondary × left/right slots when present, and the approach light system
   type for the primary/secondary ends when present); a frequency list (type,
   frequency, name); a taxi parking list (number, type, name/suffix codes, heading,
-  radius); a taxi path list (type, width, start/end node indices, resolved name);
-  and a jetway list when present at the airport. **Confirmed against a live MSFS
+  radius); a taxi path list (type, width, start/end node indices, resolved name,
+  associated runway number/designator, left/right edge type, and whether it has a
+  (lighted) center line — see the "taxi path type/runway-association/edge-type/
+  center-line editing" note under the Edit tab epic below for when these were
+  added); and a jetway list when present at the airport. **Confirmed against a live MSFS
   2024 session on 2026-09-09** for Runways, Frequencies, Parking, Taxi Paths, and
   the VASI/PAPI-absent case (all returned sane, correct values) — the
   VASI/PAPI-*present* case and Jetways not yet confirmed (needs a runway with an
@@ -611,6 +614,188 @@ is. Pure XAML/rendering change, nothing in `MainViewModel` or below moved —
 not covered by automated tests, verified manually, same as the rest of this
 tab's WPF interaction.
 
+**Revised (2026-09-14) — added taxi path type/runway-association/edge-type/
+center-line editing:** the Edit tab's Taxi Paths grid now also exposes, per
+row: `Type` (the sim's TAXI_PATH.TYPE, e.g. Taxi/Runway/Parking/Path/Closed/
+Vehicle/Road/PaintedLine), `RunwayNumber`+`RunwayDesignator` (which runway
+this path is associated with, e.g. an entrance/exit taxiway near a specific
+runway end), `LeftEdge`/`RightEdge` (the edge paint marking — None/Solid/
+Dashed/SolidDashed — distinct from the already-existing
+`LeftEdgeLighted`/`RightEdgeLighted`), and `CenterLine`/`CenterLineLighted`.
+All six were newly requested from SimConnect for this change — confirmed
+against `docs.flightsimulator.com`'s `SimConnect_AddToFacilityDefinition`
+reference (`TYPE`, `WIDTH`, `RUNWAY_NUMBER`, `RUNWAY_DESIGNATOR`,
+`LEFT_EDGE`, `LEFT_EDGE_LIGHTED`, `RIGHT_EDGE`, `RIGHT_EDGE_LIGHTED`,
+`CENTER_LINE`, `CENTER_LINE_LIGHTED`, `START`, `END`, `NAME_INDEX`, all
+INT32 except `WIDTH`/FLOAT32) before adding the `SimConnectService`
+`AddToFacilityDefinition` calls/struct fields.
+
+**Confirmed against a live sim (2026-09-14) — `LEFT_EDGE`/`RIGHT_EDGE`
+reading almost always NONE is real sim data, not a bug:** the user
+reported `LeftEdge`/`RightEdge` never showing anything but `NONE`, despite
+MSFS visibly rendering taxiway edge lines, and asked for the read path to
+be checked. Re-verified field names/types/order directly against the
+**local** SDK docs shipped with the sim (`C:\MSFS 2024 SDK\Documentation\
+public\retail\programming-apis\simconnect\api-reference\facilities\
+simconnect_addtofacilitydefinition\index.md`) rather than the web mirror —
+exact match, including the `LEFT_EDGE`/`RIGHT_EDGE` enum (0 NONE/1 SOLID/2
+DASHED/3 SOLID_DASHED) the user independently guessed. `SimConnectService`'s
+struct field order, `AddToFacilityDefinition` request order, and the
+`OnFacilityData` → `TaxiPathSegment` mapping were all re-audited line by
+line against that doc and found correct — no swap, no off-by-one, no wire
+misalignment. Live-tested against a running MSFS session at EFHK (2804 taxi
+paths, via **Export Debug Data**): `LeftEdge` is `0` on all 2804 rows,
+`RightEdge` is `0` on 2803 and `1` (SOLID) on exactly one — proving the
+field genuinely round-trips non-default values when the sim sends them,
+not stuck at a hardcoded default. In the same export, `RunwayNumber`/
+`RunwayDesignator`/`CenterLine`/`CenterLineLighted` all show rich,
+plausible variance on the identical rows (e.g. `RunwayNumber: 15` on
+`Type: RUNWAY` rows, correctly matching EFHK's real runway 15/33) — if the
+struct were misaligned, these neighboring fields would be corrupted too,
+and they aren't. Conclusion: the code is correct; EFHK's own taxi path data
+just doesn't set `LEFT_EDGE`/`RIGHT_EDGE` for almost any path. The most
+likely explanation (not itself confirmed) is that a heavily hand-modeled
+airport like EFHK renders the edge striping the user sees via baked ground-
+polygon/texture art rather than the legacy procedural taxiway-edge system
+`LEFT_EDGE`/`RIGHT_EDGE` feeds — ground polygon visuals are already a
+documented Facility Data gap for this project (see the "Non-goals for
+v0.1" note near the top of this file). Worth re-checking against a smaller,
+less heavily custom-art default airport if this needs firmer confirmation.
+`TaxiPathSegment.Type` was promoted from a raw `int` to a real enum
+(`TaxiPathType`, now covering the SDK's full documented 0-8 range —
+previously stopped at 6, missing `Road`/`PaintedLine`) since it's now a
+user-facing Edit tab picker value, the same promotion `VasiType`/
+`ApproachLightSystemType` went through earlier in this epic;
+`AirportDataTreeBuilder`'s separate `TaxiPathTypeLabels` lookup dictionary
+was removed accordingly (the enum's own `ToString()` now renders the member
+name). `RunwayDesignator`/`LeftEdge`/`RightEdge` are new real enums
+(`TaxiPathRunwayDesignator`, `TaxiEdgeType`) for the same reason.
+`RunwayNumber` is kept as a raw `int` (the SDK's documented 1-36 are literal
+runway numbers, self-explanatory without a name; 37-44/45 are a small
+compass-heading-plus-sentinel tail, given a friendly label in
+`AirportDataTreeBuilder` instead of a dedicated enum, the same treatment as
+`TaxiParkingSpot.NameCode`'s `GATE_A`..`GATE_Z` tail). All six new fields
+also show up in the read-only "Airport Data" tab automatically, since that
+tab's tree is built reflectively over whatever fields `TaxiPathSegment` has
+(see `AirportDataTreeBuilder`) — no separate work was needed there beyond
+the `RunwayNumber` label dictionary above. Covered by
+`TaxiPathEditViewModelTests.SettingTypeRunwayAssociationAndEdgeFields_WritesThroughToWrappedSegment`,
+new `AirportDataTreeBuilderTests` cases for the enum-rendered and
+label-dictionary-rendered fields, and an extended
+`AirportProjectStoreTests.Load_OldFileMissingNewFields_...` asserting all
+six default cleanly from an old project file that predates them, per
+`CLAUDE.md`'s back-compat rule.
+
+**Revised (2026-09-14) — diagram click now filters the grid instead of
+opening the popover directly:** per user feedback, clicking (or Ctrl+
+clicking) a taxiway in the Edit tab's diagram used to select it AND
+immediately pop the batch-edit popover open. That's now split into two
+separate gestures:
+1. **Left-click (or Ctrl+click) selects and filters, nothing more.**
+   `ToggleTaxiwaySelectionCommand` only builds the selection now — it no
+   longer touches whether the popover shows. `MainViewModel.VisibleTaxiPathEdits`
+   is a new property (the Taxi Paths grid's `ItemsSource`, replacing
+   `TaxiPathEdits` there) that `RefreshTaxiwayFilter` recomputes on every
+   diagram-driven selection change: all of `TaxiPathEdits` when nothing's
+   selected, or just the row(s) whose `SourceIndex` matches a selected shape
+   otherwise. `TaxiPathEdits` itself is untouched and still the one every
+   other index-by-`SourceIndex` consumer (`ApplyTaxiwayBatchEdit`,
+   `RefreshAllTaxiwayLabels`/`Visibility`) uses, so nothing about how an edit
+   actually gets applied changed. Deliberately **not** wired into
+   `SyncTaxiwaySelectionFromRows` (the existing grid-row-selection-
+   highlights-diagram path) — filtering the grid down to whatever rows the
+   user just selected *in that same grid* would collapse the rest of it out
+   from under a normal multi-row browsing/selection gesture, which isn't
+   what was asked for; only a diagram-originated selection change filters.
+2. **A plain click (no drag) on empty diagram space clears the selection**
+   (`ClearTaxiwaySelectionCommand`, new), which drops the grid's filter back
+   to "show everything." `AirportDiagramView.EndPan` now distinguishes a
+   click from a pan-drag by movement distance (≤3 device-independent pixels)
+   between mouse-down and mouse-up, and only fires the command for a
+   below-threshold release that started on empty space (a click that started
+   on a taxiway shape never sets `_isPanning` in the first place — see
+   `TaxiwayShape_MouseLeftButtonDown` — so it can't spuriously clear the
+   selection it just made).
+3. **Right-click opens the popover** for whatever's currently selected
+   (`OpenTaxiwayBatchEditCommand`/`TaxiwayContextMenuCommand`, new) —
+   regardless of what's directly under the cursor, since right-click never
+   changes the selection itself, only whether the popover shows.
+   `ShowTaxiwayBatchEditPopover` is now `HasTaxiwaySelection &&` an explicit
+   "was the popover requested via right-click" flag
+   (`_batchEditPopoverRequested`), replacing the old
+   `_selectionCameFromDiagram` flag entirely (that flag's only job was
+   gating this same popover-visibility check, which is now handled directly
+   by the right-click flag instead — nothing else needed it). The flag
+   resets to false whenever the popover actually closes (selection cleared,
+   Apply, or Cancel), so a freshly built selection always needs its own
+   right-click rather than the popover reopening on its own.
+
+Only taxiways are click-selectable in this round — runways currently have
+no click handling in the diagram at all (no `IsSelected` on `RunwayShape`,
+no click-command wiring), so extending this same filter/select/right-click
+model to the Runways grid is explicitly out of scope here and would need
+its own follow-up epic.
+
+Covered by new `MainViewModelTests`:
+`ToggleTaxiwaySelectionCommand_AloneDoesNotOpenPopover`,
+`OpenTaxiwayBatchEditCommand_WithADiagramSelection_OpensPopover`,
+`OpenTaxiwayBatchEditCommand_WithNoSelection_CanExecuteIsFalse`,
+`ClickingDiagramTaxiway_FiltersVisibleTaxiPathEditsToSelection`,
+`ClosingBatchEditPopover_ShowsEveryTaxiPathAgain`, plus updates to the
+existing `SyncTaxiwaySelectionFromRows_WhilePopoverOpen_IsIgnored`/
+`SyncTaxiwaySelectionFromRows_AfterPopoverCloses_WorksAgain`/
+`ExtendingDiagramSelection_DoesNotResetAlreadyStagedBatchEditValues` to open
+the popover via `OpenTaxiwayBatchEditCommand` explicitly, matching the new
+flow, rather than relying on selection alone. The click-vs-drag distance
+threshold and right-click wiring in `AirportDiagramView` itself are real WPF
+mouse-input behavior, not covered by automated tests — verified manually,
+same as the rest of this tab's mouse interaction.
+
+**Bug fix (2026-09-14, same day) — clicking a taxiway filtered the grid but
+never actually highlighted it, Ctrl+click multi-select didn't stick, and
+right-click had nothing to open a popover for:** reported immediately after
+the above landed. Root cause, found by bisecting against the last-committed
+build and instrumenting the live app (see below) rather than by inspection
+alone — reasoning about the code didn't surface it: reassigning
+`VisibleTaxiPathEdits` swaps the Taxi Paths grid's `ItemsSource`, and WPF's
+`DataGrid` clears its own selection and raises `SelectionChanged` as a side
+effect of that — not once, but as a short burst of several such events,
+**asynchronously**, on a later Dispatcher pass (observed ~60ms+ after the
+`ItemsSource` assignment returned, all within about 2ms of each other).
+`MainWindow.xaml.cs`'s `TaxiPathsGrid_SelectionChanged` wires that straight
+into `SyncTaxiwaySelectionFromRows`, so each of those events arrived with
+the grid's now-empty selection and stamped every diagram shape's
+`IsSelected` back to `false` — silently undoing the very selection that
+triggered the filter change in the first place. `VisibleTaxiPathEdits`
+itself stayed correct (it isn't recomputed by that second call), which is
+exactly what made the grid filter correctly while nothing ever highlighted.
+Diagnosed by: (1) bisecting file-by-file against a build restored to the
+last git commit (via `git stash`/`git show HEAD:<file>` — never touching
+the user's own already-running instance, which held the default
+`bin\Debug` output locked for the whole investigation, so every test build
+in this bisection used `dotnet build -o <isolated temp dir>`) to confirm
+the regression was real and narrow it down to `MainWindow.xaml`; (2)
+temporary `File.AppendAllText` instrumentation in
+`TaxiPathsGrid_SelectionChanged`/`ToggleTaxiwaySelection` (removed once the
+fix was confirmed) to see the actual event timing, which is what revealed
+the async, multi-event burst — a same-call-stack guard flag in
+`MainViewModel` (the first fix attempted) couldn't work against that timing
+and was replaced. **Fix:** `TaxiPathsGrid_SelectionChanged` now tracks the
+grid's `ItemsSource` reference and debounces for a 300ms settle window
+after it changes (`_lastTaxiPathsItemsSource`/
+`_lastTaxiPathsItemsSourceChangedAt`/`TaxiPathsItemsSourceSettleWindow` in
+`MainWindow.xaml.cs`) before forwarding to
+`SyncTaxiwaySelectionFromRows` — long enough to absorb the whole burst
+(observed within ~2ms) but short enough that a genuine user row click,
+which is never sub-300ms after an unrelated diagram click, still goes
+through normally. Verified against a live MSFS session (EFHK) after the
+fix: click highlights and filters to one path, Ctrl+click extends to two
+with both highlighted and both grid rows shown, right-click opens the
+popover scoped to exactly that two-path selection. Not (and cannot easily
+be) covered by an automated test — it's WPF's own internal `DataGrid`
+event-timing behavior, not application logic; verified manually, same as
+the rest of this tab's mouse interaction.
+
 **Known limitations:**
 - While a diagram-driven batch-edit session is open (the popover is
   showing), the Taxi Paths grid's own row selection can't drive the diagram
@@ -636,8 +821,10 @@ tab's WPF interaction.
 **Acceptance criteria:**
 - Given an airport is loaded, the Edit tab shows: a Taxi Names panel (one
   editable row per name, with Add/Delete); one editable row per taxi path
-  (a Name picker drawing only from that list — not free text — plus
-  left/right edge lighting checkboxes); one editable row per runway (edge
+  (a Name picker drawing only from that list — not free text — a Type
+  picker, an associated runway number field + designator picker, left/right
+  edge type pickers, left/right edge lighting checkboxes, and center
+  line/center line lighted checkboxes); one editable row per runway (edge
   light intensity, VASI/PAPI type+angle for all four end/side slots, and
   approach light system for both ends, each as a picker); and the airport's
   diagram. Edits write immediately to the loaded `AirportDetails`
@@ -648,16 +835,22 @@ tab's WPF interaction.
 - Setting a runway's VASI/PAPI or approach light picker to "(none)" clears
   that field back to "not installed" (`null`); picking a value (re)creates it.
 - Clicking a taxiway in the Edit tab's diagram selects it (replacing any
-  existing selection); Ctrl+click adds/removes it from a multi-selection.
-  Selected taxiways are visually highlighted. With one or more selected, a
-  popover lets the user set a name and/or left/right lighting and apply
-  only the field(s) actually touched to every selected path at once — an
-  untouched field is left exactly as it was on each individual path, never
-  overwritten with another selected path's value (see the third-round
-  feedback above); Cancel or Apply both clear the selection afterward. The
-  read-only Diagram tab's existing pan-by-dragging-anywhere behavior
-  (including over a taxiway) is unchanged, since it never wires up the
-  click-to-select command.
+  existing selection); Ctrl+click adds/removes it from a multi-selection —
+  only taxi paths can be part of a selection at once (runways/parking spots
+  aren't click-selectable in this epic). Selected taxiways are visually
+  highlighted, and the Taxi Paths grid filters down to show only the
+  selected path(s) (see the "diagram click filters the grid" note below).
+  A plain click (no drag) on empty diagram space clears the selection and
+  the grid's filter. With one or more selected, right-clicking the diagram
+  opens a popover that lets the user set a name and/or left/right lighting
+  and apply only the field(s) actually touched to every selected path at
+  once — an untouched field is left exactly as it was on each individual
+  path, never overwritten with another selected path's value (see the
+  third-round feedback above); Cancel or Apply both clear the selection (and
+  the grid's filter) afterward. The read-only Diagram tab's existing
+  pan-by-dragging-anywhere behavior (including over a taxiway) is unchanged,
+  since it never wires up the click-to-select/clear-selection/context-menu
+  commands.
 - Renaming a taxi path (via its grid picker or the batch popover), or
   renaming/deleting an entry in the Taxi Names panel, updates the diagram's
   taxiway label(s) and named/unnamed styling for every affected path
