@@ -115,7 +115,12 @@ public static class AirportDataTreeBuilder
         [11] = "FSS", [12] = "AWOS", [13] = "ASOS", [14] = "CPT", [15] = "GCO",
     };
 
-    private static readonly IReadOnlyDictionary<int, string> TaxiParkingTypeLabels = new Dictionary<int, string>
+    // internal rather than private: AirportXmlExporter reuses these exact
+    // tables for its <TaxiwayParking> type/name/suffix mapping, since they're
+    // the same SDK-documented int->name pairs and the XSD's stParkingType/
+    // stParkingName string enums use the identical string set — see
+    // AirportXmlExporter.MapParkingType/MapParkingName.
+    internal static readonly IReadOnlyDictionary<int, string> TaxiParkingTypeLabels = new Dictionary<int, string>
     {
         [0] = "NONE", [1] = "RAMP_GA", [2] = "RAMP_GA_SMALL", [3] = "RAMP_GA_MEDIUM", [4] = "RAMP_GA_LARGE",
         [5] = "RAMP_CARGO", [6] = "RAMP_MIL_CARGO", [7] = "RAMP_MIL_COMBAT", [8] = "GATE_SMALL",
@@ -126,7 +131,7 @@ public static class AirportDataTreeBuilder
     // TAXI_PARKING's NAME and SUFFIX fields share this same documented
     // enumeration (both are "the name of the parking spot" per the SDK
     // docs, just used for two different purposes) — 12-37 are GATE_A..GATE_Z.
-    private static readonly IReadOnlyDictionary<int, string> TaxiParkingNameLabels = BuildTaxiParkingNameLabels();
+    internal static readonly IReadOnlyDictionary<int, string> TaxiParkingNameLabels = BuildTaxiParkingNameLabels();
 
     private static Dictionary<int, string> BuildTaxiParkingNameLabels()
     {

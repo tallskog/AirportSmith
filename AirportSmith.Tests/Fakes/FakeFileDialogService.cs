@@ -6,9 +6,17 @@ public class FakeFileDialogService : IFileDialogService
 {
     public string? PathToReturn { get; set; }
     public string? LastInitialDirectory { get; private set; }
+    public string? LastSuggestedFileName { get; private set; }
 
     public string? ShowOpenJsonFileDialog(string initialDirectory)
     {
+        LastInitialDirectory = initialDirectory;
+        return PathToReturn;
+    }
+
+    public string? ShowSaveXmlFileDialog(string suggestedFileName, string initialDirectory)
+    {
+        LastSuggestedFileName = suggestedFileName;
         LastInitialDirectory = initialDirectory;
         return PathToReturn;
     }

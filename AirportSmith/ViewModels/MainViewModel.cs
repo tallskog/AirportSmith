@@ -14,6 +14,7 @@ public class MainViewModel : ViewModelBase
     private readonly IDebugDataStore? _debugDataStore;
     private readonly IFileDialogService? _fileDialogService;
     private readonly IAirportProjectStore? _projectStore;
+    private readonly IAirportXmlExporter? _xmlExporter;
 
     private string _icaoInput = string.Empty;
     private bool _isLoading;
@@ -25,6 +26,8 @@ public class MainViewModel : ViewModelBase
     private IReadOnlyList<RunwayEditViewModel> _runwayEdits = [];
     private string? _lastExportPath;
     private string? _lastProjectSavePath;
+    private string? _lastXmlExportPath;
+    private IReadOnlyList<string> _lastXmlExportWarnings = [];
 
     public string IcaoInput
     {
@@ -127,6 +130,21 @@ public class MainViewModel : ViewModelBase
         private set => SetField(ref _lastProjectSavePath, value);
     }
 
+    public string? LastXmlExportPath
+    {
+        get => _lastXmlExportPath;
+        private set => SetField(ref _lastXmlExportPath, value);
+    }
+
+    // Skipped/defaulted/truncated data noticed while building the last XML
+    // export (see AirportXmlExporter.Build) — shown to the user rather than
+    // hidden, per this project's "surface gaps, don't hide them" style.
+    public IReadOnlyList<string> LastXmlExportWarnings
+    {
+        get => _lastXmlExportWarnings;
+        private set => SetField(ref _lastXmlExportWarnings, value);
+    }
+
     // Backs the Edit tab's diagram multi-select + batch-edit popover.
     public int SelectedTaxiwayCount => SelectedTaxiwayShapes.Count();
     public bool HasTaxiwaySelection => SelectedTaxiwayCount > 0;
@@ -160,6 +178,11 @@ public class MainViewModel : ViewModelBase
     // don't exercise it.
     public bool IsProjectStoreAvailable => _projectStore != null;
 
+    // Drives the Export Airport XML button's visibility — a real, always-on
+    // feature like the project store above (nullable only so it can be
+    // omitted in tests that don't exercise it).
+    public bool IsXmlExportAvailable => _xmlExporter != null && _fileDialogService != null;
+
     // Exposed so MainWindow can drive Connect/Disconnect around the window
     // lifecycle without the ViewModel needing to know about HWNDs.
     public ISimConnectService SimConnect => _simConnect;
@@ -169,6 +192,7 @@ public class MainViewModel : ViewModelBase
     public RelayCommand LoadFromFileCommand { get; }
     public RelayCommand SaveProjectCommand { get; }
     public RelayCommand LoadProjectCommand { get; }
+    public RelayCommand ExportXmlCommand { get; }
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
     public RelayCommand<TaxiwaySelectionRequest> ToggleTaxiwaySelectionCommand { get; }
@@ -177,18 +201,20 @@ public class MainViewModel : ViewModelBase
     public RelayCommand ApplyTaxiwayBatchEditCommand { get; }
     public RelayCommand CloseTaxiwayBatchEditCommand { get; }
 
-    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null)
+    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null)
     {
         _simConnect = simConnect;
         _debugDataStore = debugDataStore;
         _fileDialogService = fileDialogService;
         _projectStore = projectStore;
+        _xmlExporter = xmlExporter;
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => IsValidIcao(IcaoInput));
         ExportDebugDataCommand = new RelayCommand(ExportDebugData, () => _debugDataStore != null && Airport != null);
         LoadFromFileCommand = new RelayCommand(LoadFromFile, () => IsDevModeImportAvailable);
         SaveProjectCommand = new RelayCommand(SaveProject, () => _projectStore != null && Airport != null);
         LoadProjectCommand = new RelayCommand(LoadProject, () => _projectStore != null && IsValidIcao(IcaoInput));
+        ExportXmlCommand = new RelayCommand(ExportXml, () => IsXmlExportAvailable && Airport != null);
         AddTaxiNameCommand = new RelayCommand(AddTaxiName, () => Airport != null);
         DeleteTaxiNameCommand = new RelayCommand<TaxiNameEditViewModel>(DeleteTaxiName, name => name != null);
         ToggleTaxiwaySelectionCommand = new RelayCommand<TaxiwaySelectionRequest>(ToggleTaxiwaySelection, request => request != null);
@@ -228,6 +254,7 @@ public class MainViewModel : ViewModelBase
         RefreshTaxiwaySelectionState();
         RefreshTaxiwayFilter();
         SaveProjectCommand.RaiseCanExecuteChanged();
+        ExportXmlCommand.RaiseCanExecuteChanged();
         AddTaxiNameCommand.RaiseCanExecuteChanged();
         ClearTaxiwaySelectionCommand.RaiseCanExecuteChanged();
     }
@@ -597,6 +624,8 @@ public class MainViewModel : ViewModelBase
         ErrorMessage = null;
         LastExportPath = null;
         LastProjectSavePath = null;
+        LastXmlExportPath = null;
+        LastXmlExportWarnings = [];
         try
         {
             var result = await _simConnect.GetAirportDetailsAsync(IcaoInput);
@@ -645,6 +674,8 @@ public class MainViewModel : ViewModelBase
         ErrorMessage = null;
         LastExportPath = null;
         LastProjectSavePath = null;
+        LastXmlExportPath = null;
+        LastXmlExportWarnings = [];
         ExportDebugDataCommand.RaiseCanExecuteChanged();
     }
 
@@ -672,5 +703,21 @@ public class MainViewModel : ViewModelBase
         ErrorMessage = null;
         LastExportPath = null;
         LastProjectSavePath = null;
+        LastXmlExportPath = null;
+        LastXmlExportWarnings = [];
+    }
+
+    private void ExportXml()
+    {
+        if (_xmlExporter is null || _fileDialogService is null || Airport is null)
+            return;
+
+        var path = _fileDialogService.ShowSaveXmlFileDialog($"{Airport.Icao}.xml", string.Empty);
+        if (path is null)
+            return;
+
+        var outcome = _xmlExporter.Export(Airport, path);
+        LastXmlExportPath = outcome.FilePath;
+        LastXmlExportWarnings = outcome.Warnings;
     }
 }

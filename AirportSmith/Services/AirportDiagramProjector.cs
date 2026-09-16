@@ -23,7 +23,6 @@ namespace AirportSmith.Services;
 // link in requirements.md's reference list.
 public static class AirportDiagramProjector
 {
-    private const double MetersPerDegLat = 111_320;
     private const double CanvasMarginMeters = 50;
     private const double MinCanvasSpanMeters = 100;
 
@@ -117,11 +116,11 @@ public static class AirportDiagramProjector
 
     public static AirportDiagram Project(AirportDetails airport)
     {
-        var metersPerDegLon = MetersPerDegLat * Math.Cos(DegToRad(airport.Latitude));
-
-        LocalPoint ProjectLatLon(double lat, double lon) => new(
-            (lon - airport.Longitude) * metersPerDegLon,
-            (lat - airport.Latitude) * MetersPerDegLat);
+        LocalPoint ProjectLatLon(double lat, double lon)
+        {
+            var (x, z) = GeoProjection.ProjectLatLon(airport.Latitude, airport.Longitude, lat, lon);
+            return new LocalPoint(x, z);
+        }
 
         // Both endpoints must already be in the local-meters plane — builds
         // the 4 corners of a rectangle spanning between them, offset by

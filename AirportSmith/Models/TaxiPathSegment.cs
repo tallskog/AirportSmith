@@ -71,4 +71,22 @@ public class TaxiPathSegment
     public double? StartZMeters { get; set; }
     public double? EndXMeters { get; set; }
     public double? EndZMeters { get; set; }
+
+    // The underlying TAXI_POINT row's own TYPE/ORIENTATION for this segment's
+    // Start/End — requested and marshaled by SimConnectService all along, but
+    // previously discarded rather than stored anywhere (see TaxiPointType.cs).
+    // Confirmed the hard way: exporting every point as type="NORMAL" produced
+    // XML the MSFS 2024 SDK Scenery Editor rejected on import ("point not
+    // linked to a hold short" / "no hold short within 200m of runway") — this
+    // isn't cosmetic, a real airport's taxiway network structurally needs its
+    // hold-short points preserved. Null means either the point never resolved
+    // at all (see StartXMeters/EndXMeters above) or the sim reported TYPE 0
+    // (NONE), which has no meaningful named value here — same convention as
+    // this class's other nullable fields. Orientation is only meaningful when
+    // the corresponding Type is one of the hold-short variants, per the SDK
+    // docs.
+    public TaxiPointType? StartPointType { get; set; }
+    public TaxiPointType? EndPointType { get; set; }
+    public TaxiPointOrientation? StartPointOrientation { get; set; }
+    public TaxiPointOrientation? EndPointOrientation { get; set; }
 }

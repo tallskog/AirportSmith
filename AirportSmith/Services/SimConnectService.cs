@@ -87,13 +87,19 @@ public class SimConnectService : ISimConnectService
     // — see the VASI case in OnFacilityData for how a row is matched back to
     // which of the four named slots it came from. Confirmed against a live sim
     // (a runway with no PAPI at all): all four slots are always sent in request
-    // order, with TYPE 0 meaning "none installed" here. Only TYPE and ANGLE are
-    // requested — BIAS_X/BIAS_Z/SPACING (light-bar geometry) aren't needed to
-    // show "is there a PAPI/VASI here and what's its glideslope angle".
+    // order, with TYPE 0 meaning "none installed" here. BIAS_X/BIAS_Z/SPACING
+    // (light-bar geometry) were added for the XML export feature, which needs
+    // real VASI placement rather than just presence/angle — field order here
+    // MUST match the AddToFacilityDefinition request order below exactly
+    // (TYPE, BIAS_X, BIAS_Z, SPACING, ANGLE), same fragility as every other
+    // struct in this file.
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct FacilityVasiData
     {
         public int Type;
+        public float BiasX;
+        public float BiasZ;
+        public float Spacing;
         public float Angle;
     }
 
@@ -212,9 +218,13 @@ public class SimConnectService : ISimConnectService
         public float BiasX, BiasZ;
     }
 
-    // One TAXI_POINT row's resolved local-meters offset, keyed by ItemIndex
-    // in PendingLookup.TaxiPoints — see ResolveTaxiPathPoints.
-    private readonly record struct TaxiPointNode(float X, float Z);
+    // One TAXI_POINT row's resolved local-meters offset plus its own raw
+    // TYPE/ORIENTATION, keyed by ItemIndex in PendingLookup.TaxiPoints — see
+    // ResolveTaxiPathPoints. Type/Orientation used to be read off
+    // FacilityTaxiPointData and immediately discarded rather than stored
+    // here — see TaxiPathSegment.StartPointType's comment for why that was a
+    // real bug, not a deliberate simplification.
+    private readonly record struct TaxiPointNode(float X, float Z, int Type, int Orientation);
 
     // Aggregation buffer for one in-flight GetAirportDetailsAsync call. Only one
     // lookup may be in flight at a time (enforced in GetAirportDetailsAsync).
@@ -409,21 +419,33 @@ public class SimConnectService : ISimConnectService
         // mapping needs to change (or a more reliable correlation found).
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_LEFT_VASI");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_X");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_Z");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SPACING");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ANGLE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_LEFT_VASI");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_RIGHT_VASI");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_X");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_Z");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SPACING");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ANGLE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_RIGHT_VASI");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_LEFT_VASI");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_X");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_Z");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SPACING");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ANGLE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_LEFT_VASI");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_RIGHT_VASI");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "TYPE");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_X");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "BIAS_Z");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SPACING");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "ANGLE");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_RIGHT_VASI");
 
@@ -636,10 +658,22 @@ public class SimConnectService : ISimConnectService
                     var vasiType = (VasiType)v.Type;
                     switch (pending.VasiSlotIndex)
                     {
-                        case 0: runway.PrimaryLeftVasiType = vasiType; runway.PrimaryLeftVasiAngleDeg = v.Angle; break;
-                        case 1: runway.PrimaryRightVasiType = vasiType; runway.PrimaryRightVasiAngleDeg = v.Angle; break;
-                        case 2: runway.SecondaryLeftVasiType = vasiType; runway.SecondaryLeftVasiAngleDeg = v.Angle; break;
-                        case 3: runway.SecondaryRightVasiType = vasiType; runway.SecondaryRightVasiAngleDeg = v.Angle; break;
+                        case 0:
+                            runway.PrimaryLeftVasiType = vasiType; runway.PrimaryLeftVasiAngleDeg = v.Angle;
+                            runway.PrimaryLeftVasiBiasXMeters = v.BiasX; runway.PrimaryLeftVasiBiasZMeters = v.BiasZ; runway.PrimaryLeftVasiSpacingMeters = v.Spacing;
+                            break;
+                        case 1:
+                            runway.PrimaryRightVasiType = vasiType; runway.PrimaryRightVasiAngleDeg = v.Angle;
+                            runway.PrimaryRightVasiBiasXMeters = v.BiasX; runway.PrimaryRightVasiBiasZMeters = v.BiasZ; runway.PrimaryRightVasiSpacingMeters = v.Spacing;
+                            break;
+                        case 2:
+                            runway.SecondaryLeftVasiType = vasiType; runway.SecondaryLeftVasiAngleDeg = v.Angle;
+                            runway.SecondaryLeftVasiBiasXMeters = v.BiasX; runway.SecondaryLeftVasiBiasZMeters = v.BiasZ; runway.SecondaryLeftVasiSpacingMeters = v.Spacing;
+                            break;
+                        case 3:
+                            runway.SecondaryRightVasiType = vasiType; runway.SecondaryRightVasiAngleDeg = v.Angle;
+                            runway.SecondaryRightVasiBiasXMeters = v.BiasX; runway.SecondaryRightVasiBiasZMeters = v.BiasZ; runway.SecondaryRightVasiSpacingMeters = v.Spacing;
+                            break;
                     }
                 }
                 pending.VasiSlotIndex++;
@@ -679,6 +713,7 @@ public class SimConnectService : ISimConnectService
                 var p = (FacilityTaxiParkingData)data.Data[0];
                 pending.Details.ParkingSpots.Add(new TaxiParkingSpot
                 {
+                    ItemIndex = (int)data.ItemIndex,
                     Number = p.Number,
                     Type = p.Type,
                     NameCode = p.NameCode,
@@ -722,7 +757,7 @@ public class SimConnectService : ISimConnectService
 
             case SIMCONNECT_FACILITY_DATA_TYPE.TAXI_POINT:
                 var tp = (FacilityTaxiPointData)data.Data[0];
-                pending.TaxiPoints[(int)data.ItemIndex] = new TaxiPointNode(tp.BiasX, tp.BiasZ);
+                pending.TaxiPoints[(int)data.ItemIndex] = new TaxiPointNode(tp.BiasX, tp.BiasZ, tp.Type, tp.Orientation);
                 break;
         }
     }
@@ -765,22 +800,67 @@ public class SimConnectService : ISimConnectService
     // TaxiPathSegment.StartIndex/EndIndex are positions into this request's
     // TAXI_POINT rows (by ItemIndex), resolved in the same deferred pass as
     // taxi path names for the identical reason — order isn't guaranteed.
+    //
+    // EXCEPT for a Type == Parking segment's EndIndex: per the SDK docs,
+    // TAXI_PATH.START/END is "the index number of taxiway point OR PARKING
+    // SPACE the path starts from/ends on" — not always a TAXI_POINT index.
+    // Confirmed against real extracted airport data that every PARKING-type
+    // path's End is a TAXI_PARKING ItemIndex, not a TAXI_POINT one: resolving
+    // it against TaxiPoints (as this method used to do unconditionally)
+    // happened to "succeed" every time — TAXI_POINT and TAXI_PARKING indices
+    // both start at 0, so the wrong dictionary almost always has *some* entry
+    // at that index — silently returning an unrelated point elsewhere on the
+    // airport instead of failing loudly. That produced "taxi path" segments
+    // hundreds to thousands of meters long for what should be a short
+    // stand-to-taxiway stub, which is what an MSFS 2024 SDK Scenery Editor
+    // import flagged as broken taxiway network connectivity.
     private static void ResolveTaxiPathPoints(PendingLookup pending)
     {
+        // TryAdd rather than ToDictionary — defensive against a malformed
+        // response with a duplicate ItemIndex, which would otherwise throw
+        // and fail the whole lookup over one bad row.
+        var parkingByItemIndex = new Dictionary<int, TaxiParkingSpot>();
+        foreach (var spot in pending.Details.ParkingSpots)
+            parkingByItemIndex.TryAdd(spot.ItemIndex, spot);
+
         foreach (var segment in pending.Details.TaxiPaths)
         {
             if (pending.TaxiPoints.TryGetValue(segment.StartIndex, out var s))
             {
                 segment.StartXMeters = s.X;
                 segment.StartZMeters = s.Z;
+                segment.StartPointType = ResolveTaxiPointType(s.Type);
+                segment.StartPointOrientation = ResolveTaxiPointOrientation(s.Orientation);
             }
-            if (pending.TaxiPoints.TryGetValue(segment.EndIndex, out var e))
+
+            if (segment.Type == TaxiPathType.Parking)
+            {
+                if (parkingByItemIndex.TryGetValue(segment.EndIndex, out var parkingSpot))
+                {
+                    segment.EndXMeters = parkingSpot.BiasXMeters;
+                    segment.EndZMeters = parkingSpot.BiasZMeters;
+                }
+                // No EndPointType/EndPointOrientation here — a parking spot
+                // isn't a TAXI_POINT row, so that concept doesn't apply.
+            }
+            else if (pending.TaxiPoints.TryGetValue(segment.EndIndex, out var e))
             {
                 segment.EndXMeters = e.X;
                 segment.EndZMeters = e.Z;
+                segment.EndPointType = ResolveTaxiPointType(e.Type);
+                segment.EndPointOrientation = ResolveTaxiPointOrientation(e.Orientation);
             }
         }
     }
+
+    // TYPE 0 (NONE) and anything outside the documented 1/2/4/5/6 set have no
+    // meaningful named value — left null rather than guessing, same
+    // convention as VasiType/ApproachLightSystemType's "0 means not present".
+    private static TaxiPointType? ResolveTaxiPointType(int rawType) =>
+        rawType is 1 or 2 or 4 or 5 or 6 ? (TaxiPointType)rawType : null;
+
+    private static TaxiPointOrientation? ResolveTaxiPointOrientation(int rawOrientation) =>
+        rawOrientation is 0 or 1 ? (TaxiPointOrientation)rawOrientation : null;
 
     // rgData may arrive across more than one event for airports with many
     // jetways (dwEntryNumber/dwOutOf paginate like other SimConnect list

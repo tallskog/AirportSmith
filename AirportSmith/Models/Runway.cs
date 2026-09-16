@@ -34,6 +34,30 @@ public class Runway
     public VasiType? SecondaryRightVasiType { get; set; }
     public double? SecondaryRightVasiAngleDeg { get; set; }
 
+    // VASI's BIAS_X/BIAS_Z/SPACING per the SDK docs — the slot's position as
+    // a local-meters offset from the runway centerline/center point (same
+    // convention as TaxiPathSegment's resolved coordinates and
+    // TaxiParkingSpot.BiasXMeters/BiasZMeters) plus the spacing between light
+    // rows. Added purely additively alongside the pre-existing Type/AngleDeg
+    // pair per slot (not merged into a record) so older saved projects keep
+    // deserializing unchanged — these three are simply null for a project
+    // saved before this field was added, same "missing means not yet known"
+    // convention as everywhere else nullable in this class. Needed for
+    // AirportXmlExporter's <Vasi> element, which requires biasX/biasZ/spacing
+    // as attributes.
+    public double? PrimaryLeftVasiBiasXMeters { get; set; }
+    public double? PrimaryLeftVasiBiasZMeters { get; set; }
+    public double? PrimaryLeftVasiSpacingMeters { get; set; }
+    public double? PrimaryRightVasiBiasXMeters { get; set; }
+    public double? PrimaryRightVasiBiasZMeters { get; set; }
+    public double? PrimaryRightVasiSpacingMeters { get; set; }
+    public double? SecondaryLeftVasiBiasXMeters { get; set; }
+    public double? SecondaryLeftVasiBiasZMeters { get; set; }
+    public double? SecondaryLeftVasiSpacingMeters { get; set; }
+    public double? SecondaryRightVasiBiasXMeters { get; set; }
+    public double? SecondaryRightVasiBiasZMeters { get; set; }
+    public double? SecondaryRightVasiSpacingMeters { get; set; }
+
     // RUNWAY's six nested PAVEMENT sub-structures (PRIMARY_THRESHOLD/
     // PRIMARY_BLASTPAD/PRIMARY_OVERRUN and their SECONDARY_ counterparts).
     // Null means "not present" (the PAVEMENT struct's ENABLE field was 0),

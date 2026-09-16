@@ -6,4 +6,7 @@ public interface IFileDialogService
 {
     // Returns the chosen path, or null if the user cancelled.
     string? ShowOpenJsonFileDialog(string initialDirectory);
+
+    // Returns the chosen path, or null if the user cancelled.
+    string? ShowSaveXmlFileDialog(string suggestedFileName, string initialDirectory);
 }

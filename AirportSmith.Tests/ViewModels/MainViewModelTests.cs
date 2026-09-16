@@ -857,4 +857,75 @@ public class MainViewModelTests
 
         Assert.True(shape0.IsVisible);
     }
+
+    [Fact]
+    public void IsXmlExportAvailable_RequiresBothExporterAndDialogService()
+    {
+        Assert.False(new MainViewModel(new FakeSimConnectService()).IsXmlExportAvailable);
+        Assert.False(new MainViewModel(new FakeSimConnectService(), xmlExporter: new FakeAirportXmlExporter()).IsXmlExportAvailable);
+        Assert.False(new MainViewModel(new FakeSimConnectService(), fileDialogService: new FakeFileDialogService()).IsXmlExportAvailable);
+        Assert.True(new MainViewModel(new FakeSimConnectService(), fileDialogService: new FakeFileDialogService(), xmlExporter: new FakeAirportXmlExporter()).IsXmlExportAvailable);
+    }
+
+    [Fact]
+    public void ExportXmlCommand_CanExecute_FalseUntilAirportLoaded()
+    {
+        var vm = new MainViewModel(new FakeSimConnectService(), fileDialogService: new FakeFileDialogService(), xmlExporter: new FakeAirportXmlExporter());
+
+        Assert.False(vm.ExportXmlCommand.CanExecute(null));
+
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var projectStore = new FakeAirportProjectStore();
+        projectStore.Save(airport);
+        var vmWithProjectStore = new MainViewModel(new FakeSimConnectService(), projectStore: projectStore,
+            fileDialogService: new FakeFileDialogService(), xmlExporter: new FakeAirportXmlExporter())
+        { IcaoInput = "EFHK" };
+        vmWithProjectStore.LoadProjectCommand.Execute(null);
+
+        Assert.True(vmWithProjectStore.ExportXmlCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void ExportXmlCommand_Execute_DelegatesToExporterAndSetsPathAndWarnings()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var projectStore = new FakeAirportProjectStore();
+        projectStore.Save(airport);
+        var dialog = new FakeFileDialogService { PathToReturn = "C:/out/EFHK.xml" };
+        var exporter = new FakeAirportXmlExporter
+        {
+            PathToReturn = "C:/out/EFHK.xml",
+            WarningsToReturn = ["taxi path 0->1 skipped"],
+        };
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: projectStore,
+            fileDialogService: dialog, xmlExporter: exporter)
+        { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+
+        vm.ExportXmlCommand.Execute(null);
+
+        Assert.Same(airport, exporter.LastExported);
+        Assert.Equal("C:/out/EFHK.xml", vm.LastXmlExportPath);
+        Assert.Equal(["taxi path 0->1 skipped"], vm.LastXmlExportWarnings);
+    }
+
+    [Fact]
+    public void ExportXmlCommand_UserCancelsDialog_LeavesPathAndWarningsUnchanged()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var projectStore = new FakeAirportProjectStore();
+        projectStore.Save(airport);
+        var dialog = new FakeFileDialogService { PathToReturn = null };
+        var exporter = new FakeAirportXmlExporter();
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: projectStore,
+            fileDialogService: dialog, xmlExporter: exporter)
+        { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+
+        vm.ExportXmlCommand.Execute(null);
+
+        Assert.Null(exporter.LastExported);
+        Assert.Null(vm.LastXmlExportPath);
+        Assert.Empty(vm.LastXmlExportWarnings);
+    }
 }

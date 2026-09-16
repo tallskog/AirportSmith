@@ -895,13 +895,370 @@ the rest of this tab's mouse interaction.
   including the `EDGE_LIGHTS` INT8 risk above, which needs a live sim with a
   real airport of known edge-light intensity to confirm.
 
+## v0.1+ — Generate SDK-compatible `<Airport>` XML
+
+**User story:** As a user, after loading and editing an airport, I can click
+an "Export Airport XML" button and get a `bglcomp.xsd`-conformant
+`<FSData><Airport>...</Airport></FSData>` file that overrides the stock
+airport's runways and taxiways/parking with my edits — ready to compile with
+the MSFS 2024 SDK's `bglcomp` or import into the Dev Mode Scenery Editor.
+This is the missing link that lets every edit already committed above
+(runway lighting/VASI/PAPI/approach lights/pavement features, taxi path
+naming/type/edges/lighting) actually take effect in MSFS. **Out of scope,
+still not done:** this only produces the XML file — shelling out to
+`fspackagetool`/Dev Mode to build a Community-folder package from it is a
+separate, still-unapproved epic (see the proposed epics below).
+
+Checked directly against the locally installed MSFS 2024 SDK before
+starting: `Tools/bin/bglcomp.xsd` is the schema `bglcomp` validates against,
+and `Documentation/public/flighting/content-configuration/environment/
+airports-and-facilities/airport-xml-properties` (and its `runway-xml-
+properties`/`taxiway-xml-properties` siblings) documents the element/
+attribute reference. Overriding the stock airport reuses the same `ident`
+plus a `<DeleteAirport>` element (per the docs' explicit callout that data is
+otherwise *added* to the existing airport, not replaced) — no
+`<ExclusionRectangle>`/`<Polygon>` needed, since those exclude 3D buildings/
+vegetation/TIN, which stays out of scope. `<TaxiwayPoint>`/`<TaxiwayParking>`/
+`<TaxiwayServiceStand>`/`<TaxiName>`/`<TaxiwayPath>` must appear in exactly
+that order inside `<Airport>` — enforced by the schema.
+
+Three scope decisions made with the user before implementation:
+1. **Jetways are excluded from the export.** The XML schema's `<Jetway>`
+   element requires an embedded `<SceneryObject>` referencing a 3D model
+   GUID, which the `Jetway` model (from the legacy `RequestJetwayData` API)
+   never captured — there's nothing correct to put there.
+2. **VASI/PAPI position data was added to extraction** rather than
+   approximated: `Runway` gained `*VasiBiasXMeters`/`BiasZMeters`/
+   `SpacingMeters` per slot (purely additive, no schema/migration concerns),
+   and `SimConnectService` now requests `BIAS_X`/`BIAS_Z`/`SPACING` alongside
+   the already-requested `TYPE`/`ANGLE` for all four VASI slots.
+3. **Frequencies are left out of the export entirely** (no `<Com>` elements,
+   `deleteAllFrequencies` not set) — there's no frequency-editing feature, so
+   the stock airport's COM frequencies are left completely untouched.
+   **Parking spots ARE exported**, even though spot type/heading/radius
+   editing isn't built yet (still proposed epic 1 below) — `deleteAllTaxiways`
+   removes taxi points/parking/paths as one group, so replacing taxiways
+   without re-adding the existing parking spots would silently delete every
+   gate at the airport.
+
+Known, documented limitations (not fixed by this epic):
+- A taxi path with `TaxiPathType.Unknown` or `.PaintedLine` has no
+  equivalent in the schema's `stTaxiwayPathType` and is skipped from the
+  export (with a warning surfaced to the user), not defaulted to some other
+  type.
+- `TaxiName.Value` is truncated to the schema's 8-character `stString8`
+  limit if longer (with a warning), since taxi names are free text in the
+  Edit tab but the XML format caps them.
+- `Runway.SurfaceType` and `TaxiParkingSpot.Type`/`NameCode`/`SuffixCode`
+  are mapped from their raw SimConnect int values to the schema's string
+  enums via explicit lookup tables (sourced from the SDK's Facility Data
+  reference, cross-checked against `bglcomp.xsd`); an unmapped/out-of-range
+  value falls back to a safe default (`"ASPHALT"` for surface, `"NONE"` for
+  parking name/suffix/type) with a warning, rather than emitting a value
+  `bglcomp` would reject.
+
+Acceptance criteria:
+- Given an airport is loaded, clicking **Export Airport XML** prompts for a
+  save location (via `IFileDialogService.ShowSaveXmlFileDialog`) and writes a
+  well-formed `<?xml version="1.0" encoding="utf-8"?><FSData version="9.0">
+  <Airport>...</Airport></FSData>` document via `IAirportXmlExporter`, and
+  shows the path written to (`LastXmlExportPath`) plus any warnings
+  (`LastXmlExportWarnings`) for skipped/defaulted/truncated data as described
+  above.
+- The `<Airport>` element's `ident`/`lat`/`lon`/`alt`/`name`/`magvar` match
+  the loaded `AirportDetails`, and it contains a `<DeleteAirport
+  deleteAllRunways="true" deleteAllTaxiways="true" />` with no other flags
+  set.
+- Every `AirportDetails.Runways` entry becomes a `<Runway>` with matching
+  geometry/surface/lighting, a `<Vasi>` element only for each non-null VASI
+  slot (not an empty/default one for "not installed"), an `<ApproachLights>`
+  element only for each non-null approach-light system, an
+  `<OffsetThreshold>`/`<BlastPad>`/`<Overrun>` only for each non-null
+  pavement feature, and exactly two `<RunwayStart>` elements computed from
+  the runway's own center/heading/length via the new
+  `GeoProjection.UnprojectLocalPoint` (the documented inverse of
+  `AirportDiagramProjector`'s existing `ProjectLatLon`, extracted into a
+  shared `Services/GeoProjection.cs` so both stay in lockstep).
+- `AirportDetails.TaxiPaths`/`ParkingSpots`/`TaxiNames` become
+  `<TaxiwayPoint>`/`<TaxiwayParking>`/`<TaxiName>`/`<TaxiwayPath>` elements in
+  the schema-required order, with `TaxiwayPoint` indices reused directly from
+  `TaxiPathSegment.StartIndex`/`EndIndex` (already stable/shared across
+  segments) and `TaxiwayParking`/`TaxiName` indices synthesized fresh per
+  export. **A `<TaxiwayPoint>` is only emitted when at least one exported
+  `<TaxiwayPath>` actually connects to it**, and its `type`/`orientation`
+  reflect the real `TAXI_POINT.TYPE`/`ORIENTATION` the point resolved to
+  (`NORMAL` only as a fallback for a point that never resolved a type) — see
+  the revisions below for why both are called out explicitly as their own
+  criteria, not just implied by the general "reused directly" wording.
+- No `<Jetway>` or `<Com>` element is ever emitted, regardless of what's in
+  `AirportDetails.Jetways`/`Frequencies`.
+
+**Revised after first-round user feedback (real import into the MSFS 2024 SDK
+Dev Mode Scenery Editor):** the first version built the `<TaxiwayPoint>` set
+from *every* taxi path's individually-resolved endpoint, independent of
+whether that path itself ended up exported. A path with one resolved end and
+one unresolved end (or an unmappable type) got dropped from the output
+entirely, but its resolved end had already been added to the point set —
+orphaning it: emitted with a valid position, but connected by zero exported
+`<TaxiwayPath>` elements. The Scenery Editor's own graph validation caught
+every one of these on import, flagging each as "Point not linked to the main
+graph". Fixed by reordering `AirportXmlExporter.Build`: it now decides which
+taxi paths are exportable (both endpoints resolved, mappable type) *before*
+building any `<TaxiwayPoint>`, and only builds points from that already-
+filtered set — so a point can never exist in the output without at least one
+path connecting to it. Regression-tested
+(`Build_PathWithOneUnresolvedEnd_DoesNotEmitOrphanedTaxiwayPointForTheResolvedEnd`,
+`Build_MixOfExportableAndUnresolvedPaths_OnlyEmitsPointsUsedByExportedPaths`).
+
+**Revised after second-round user feedback (same real import):** the first
+round's fix didn't fully resolve the Scenery Editor's errors — the remaining
+ones turned out to be a *different* problem with the same "not linked to the
+main graph" wording, plus a companion "no hold short within 200m of runway"
+warning on the runway itself, and "point not linked to a hold short" on the
+point's own properties. Root cause: every exported `<TaxiwayPoint>` was
+hardcoded to `type="NORMAL"`, originally documented above as a cosmetic,
+out-of-scope limitation ("hold-short markings are lost on export") — it
+turned out not to be cosmetic at all. MSFS's taxiway network validation
+structurally requires hold-short points near runway entrances; without any,
+the network doesn't validate even though it's fully connected by paths.
+Investigating further found the real bug: `SimConnectService` was already
+requesting and marshaling `TAXI_POINT.TYPE`/`ORIENTATION` (confirmed against
+the SDK's Facility Data reference) into `FacilityTaxiPointData`, then
+discarding both fields immediately rather than storing them anywhere —
+`TaxiPointNode` only kept X/Z. Fixed by:
+1. Two new enums, `TaxiPointType` (`Normal`/`HoldShort`/`IlsHoldShort`/
+   `HoldShortNoDraw`/`IlsHoldShortNoDraw`, matching `TAXI_POINT.TYPE`
+   1/2/4/5/6 — no `None`/0 member, same "0 means not present" convention as
+   `VasiType`/`ApproachLightSystemType`) and `TaxiPointOrientation`
+   (`Forward`/`Reverse`, matching `TAXI_POINT.ORIENTATION` 0/1).
+2. `TaxiPathSegment` gained `Start`/`EndPointType` and `Start`/
+   `EndPointOrientation` (purely additive, no migration needed — same as the
+   VASI bias/spacing fields added earlier in this epic), populated in
+   `SimConnectService.ResolveTaxiPathPoints` from the now-retained
+   `TaxiPointNode.Type`/`Orientation`.
+3. `AirportXmlExporter.BuildTaxiwayPoints` now emits the real mapped
+   `type` (falling back to `NORMAL` only when a point's type never
+   resolved — e.g. an older saved project) and an `orientation` attribute
+   for hold-short-family points only, per the SDK docs' "orientation is
+   only meaningful when type is hold short". Regression-tested
+   (`Build_TaxiwayPointWithHoldShortType_MapsTypeAndOrientation`).
+
+**Revised after third-round user feedback (same real import, still failing):**
+the hold-short fix above was correct but incomplete — the Scenery Editor
+still reported "point not linked to the main graph" for many points.
+Investigated directly against the actual exported XML (not just theory) by
+running the graph's connected-components analysis by hand: every one of the
+381 `<TaxiwayPoint>`s and 479 `<TaxiwayPath>`s formed a single connected
+component, ruling out a fragmented-network explanation. Measuring each
+`<TaxiwayPath>`'s length instead (distance between its `start`/`end`
+points) found the real signature: 29 of the airport's 36 `TYPE="PARKING"`
+paths (the short stub connecting a taxiway to a specific gate) were
+hundreds to *thousands* of meters long — physically implausible for what
+should be a ~20-60m stub, and invisible in the Diagram tab only because
+it's a small fraction of ~480 lines rendered among a dense network.
+Root cause, confirmed against the SDK's own `TAXI_PATH` reference: `START`/
+`END` is documented as "the index number of taxiway point **or parking
+space**" — for a `PARKING`-type path, `END` is a `TAXI_PARKING` ItemIndex,
+not a `TAXI_POINT` one. `SimConnectService.ResolveTaxiPathPoints` was
+resolving it against `TAXI_POINT` unconditionally regardless of type; since
+both index spaces start at 0, that lookup almost always "succeeded" against
+the wrong dictionary — silently returning an unrelated taxi point elsewhere
+on the airport instead of failing loudly. Recomputing those 29 paths'
+lengths against their actual `TaxiwayParking` spot (by matching `END` to
+that spot's own ItemIndex, not a sequential position) brought every one down
+to 18-64m — a real airport's parking-stub scale. Fixed by:
+1. `TaxiParkingSpot` gained `ItemIndex` (the TAXI_PARKING row's own index,
+   distinct from `Number`, the user-facing gate number) — purely additive,
+   no migration needed, populated in `SimConnectService`'s existing
+   `TAXI_PARKING` case.
+2. `SimConnectService.ResolveTaxiPathPoints` now branches on
+   `segment.Type == TaxiPathType.Parking`: only then is `EndIndex` resolved
+   against the extracted parking spots (by `ItemIndex`) instead of
+   `TAXI_POINT` rows. `StartIndex` is unaffected (every sampled case had a
+   genuine taxiway point there).
+3. `AirportXmlExporter` now exports each `<TaxiwayParking>` with its own
+   `ItemIndex` as its `index` (via the new `ComputeParkingIndices`, which
+   falls back to the old sequential numbering with a warning if `ItemIndex`
+   values collide — the signature of a project saved before this field
+   existed) instead of an arbitrary loop position, and `BuildTaxiwayPoints`
+   no longer synthesizes a `<TaxiwayPoint>` for a `Parking`-type path's
+   `EndIndex` at all — that index belongs to `<TaxiwayParking>`, and a
+   same-indexed `<TaxiwayPoint>` would be redundant with it (and was, in
+   fact, the original source of these particular "not linked to the main
+   graph" errors before this was understood). Regression-tested
+   (`Build_ParkingTypePathEnd_ResolvesToTaxiwayParkingNotASynthesizedTaxiwayPoint`,
+   `Build_ParkingSpotItemIndicesCollide_FallsBackToSequentialNumberingAndWarns`).
+
+This does not rule out every possible remaining cause (a handful of `RUNWAY`-
+type paths were also found longer than expected during this investigation,
+without as clean an explanation — see the Known limitations note above on
+`RunwayNumber`/`RunwayDesignator` data quality, which may be related), but
+it is expected to eliminate the large majority of the reported errors.
+
+**OPEN — investigation paused mid-session (2026-09-15), not resolved:** after
+the fix above, `<TaxiwayPath>` elements stopped being flagged as broken, but
+a new, more fundamental symptom appeared: **the MSFS 2024 SDK Scenery Editor
+does not import any `<TaxiwayPath>` elements at all** — the Content List
+shows `Runway`/`TaxiwayPoint`/`TaxiwayParking` objects but zero taxiway path
+objects, confirmed two ways: (1) manually selecting two imported
+`TaxiwayPoint`s in the Editor and adding a `TaxiwayPath` between them via the
+Editor's own UI immediately clears that point's "not linked to the main
+graph" error — proving the Editor understands and can use `TaxiwayPath`
+objects fine, it's specifically not importing ours; (2) tried both import
+routes available — the dedicated "Airport XML Importer" tool (with "Import
+taxiways" checked) and replacing the project's own
+`PackageSources\Scenery\<group>\scenery\<ICAO>.xml` source file directly and
+reloading via "Load In Editor" — both fail identically, ruling out one
+specific importer tool as the cause.
+
+Ruled out during this session, with evidence, so a future investigation
+doesn't need to re-check them:
+- **Not element ordering or schema validity** — the exported XML was
+  directly inspected and confirmed well-formed, with `<TaxiwayPoint>` →
+  `<TaxiwayParking>` → `<TaxiName>` → `<TaxiwayPath>` in the exact order
+  `bglcomp.xsd` requires, every attribute matching its documented type.
+- **Not graph fragmentation** — a full connected-components check against
+  the actual exported file (479 `<TaxiwayPath>` edges, 381
+  `<TaxiwayPoint>`s) found exactly one component containing every point.
+- **Not gaps in the `TaxiwayPoint` index range** — checked directly: 381
+  points span index 0-380 with zero missing values.
+- **Not specific to scale/complexity or to `PARKING`/`RUNWAY`-type paths'
+  data-quality issues** — a minimal hand-written test file (3
+  `TaxiwayPoint`s, 2 plain `TYPE="TAXI"` `TaxiwayPath`s, no parking, no
+  names, no hold-short points, touching only `deleteAllTaxiways`) was tried
+  in isolation and **failed identically**. This is the most important
+  finding to preserve: it means the parking-index-confusion fix earlier in
+  this section, while real and worth keeping, is *not* sufficient to explain
+  "zero `TaxiwayPath` elements import" — something more basic than any
+  per-type coordinate bug is going on.
+
+New lead surfaced by the user, not yet investigated: in the Edit tab's Taxi
+Paths grid, rows with `Type == Runway` can't be located on the Diagram when
+clicked. Partly expected behavior, not necessarily a bug by itself —
+`AirportDiagramProjector.Project` (`Services/AirportDiagramProjector.cs`
+~line 319) deliberately only draws `TaxiPathType.Taxi`/`.Path` segments, so
+`Runway`-typed ones were never going to appear there regardless of whether
+their coordinates are correct. But this also means there's currently no way
+to visually sanity-check a `Runway`-type path's position, which is exactly
+how the `RUNWAY`-type length anomalies found earlier in this section (3
+paths, `Start=2/End=1`, `Start=14/End=13`, `Start=286/End=8`, all
+suspiciously long) went unnoticed. Worth checking whether `Runway`-type
+paths have their own version of the same "START/END index space is
+overloaded depending on context" issue the `Parking`-type fix uncovered —
+the SDK's own `TAXI_PATH.START`/`END` docs only mention "taxiway point or
+parking space" explicitly, not a third runway-related interpretation, but
+that doc sentence may simply be incomplete (the way the SDK's own
+`RUNWAY.SURFACE` doc is separately known to be incomplete already).
+
+**RESOLVED (2026-09-16), root cause found and fixed:** step 1 above (diff
+against the Editor's own real output) was carried out — the user imported
+AirportSmith's XML into a scratch project, manually added a handful of
+`<TaxiwayPath>`s between the imported points using the Editor's own UI, then
+saved. Every `<TaxiwayPath>` the Editor itself wrote carried a `surface`
+attribute (a material GUID, e.g.
+`surface="{85D02B2B-08A1-452E-AB07-6D5AE7F52884}"`) plus
+`drawSurface="FALSE" drawDetail="TRUE" groundMerging="TRUE"
+excludeVegetationAround="TRUE" excludeVegetationInside="TRUE"` —
+**AirportXmlExporter.BuildTaxiwayPath emitted none of these**, confirming
+step 3's theory. `surface` is schema-optional (`bglcomp.xsd`'s `stSurface`)
+so this was never caught by schema validation, but it's apparently
+functionally required for the Editor to construct a taxiway path *object* at
+all — without it, the element is silently dropped rather than erroring,
+which also explains why the minimal 3-point/2-path test in the "ruled out"
+list above failed identically (it also omitted `surface`, for the same
+underlying reason).
+
+Confirmed why the exporter never emitted `surface` in the first place:
+SimConnect's `TAXI_PATH` facility data has no `SURFACE` field at all
+(checked directly against the SDK's `AddToFacilityDefinition` reference —
+`TAXI_PATH` exposes `TYPE`/`WIDTH`/`LEFT_HALF_WIDTH`/`RIGHT_HALF_WIDTH`/
+`WEIGHT`/`RUNWAY_NUMBER`/`RUNWAY_DESIGNATOR`/`LEFT_EDGE(_LIGHTED)`/
+`RIGHT_EDGE(_LIGHTED)`/`CENTER_LINE(_LIGHTED)`/`START`/`END`/`NAME_INDEX`
+only), so there was never per-path surface data available to extract in the
+first place — unlike `Runway.SurfaceType`, which SimConnect *does* expose via
+`RUNWAY.SURFACE`.
+
+**Fix:** every exported `<TaxiwayPath>` now also carries
+`surface="ASPHALT"` (the same plain-string fallback `MapSurface` already
+uses for an unrecognized Runway surface code — proven to work, since Runways
+already import fine with plain surface names, not just GUIDs) and the same
+`drawSurface`/`drawDetail`/`groundMerging`/`excludeVegetationAround`/
+`excludeVegetationInside` values seen on every path in the Editor's own
+output, applied as fixed defaults (not sourced from SimConnect, since
+`TAXI_PATH` has none of these fields either). One export-level warning
+(not one per path) notes that taxiway path surface is a synthesized default.
+Regression-tested
+(`Build_MappableTaxiPath_HasSurfaceAndSceneryEditorDefaultAttributes`).
+
+**Follow-up (2026-09-16, same day): the surface/drawSurface fix above was not
+sufficient on its own** — the user re-exported and re-imported and paths
+still didn't show up. Second root cause found by re-comparing against the
+same Editor-authored sample file: **every ordinary taxi route the Editor
+wrote used `type="TAXI"`; none used `type="PATH"`** — but AirportSmith's
+export had been emitting `type="PATH"` for effectively every real taxi path,
+because that's what SimConnect's `TAXI_PATH.TYPE` reports for them (`TYPE ==
+4`, mapped by `TaxiPathType.Path` — see that enum's own comment: the OIBK
+sample had `Type == Path` on all 479 rows, zero `TAXI` rows observed at all).
+`"PATH"` is a valid `stTaxiwayPathType` enumeration value and passes schema
+validation, but it apparently isn't treated as part of the drivable taxi
+network graph by the Scenery Editor's importer the way `"TAXI"` is — whereas
+`"TAXI"` is exactly the type the Editor itself always chooses when a user
+draws an ordinary taxi route by hand.
+
+**Fix:** `AirportXmlExporter.MapTaxiPathType` now maps `TaxiPathType.Path` to
+XML `type="TAXI"` instead of the schema's own literal `"PATH"` string — since
+SimConnect's `Path` value is what virtually every real taxi route comes back
+as, this affects nearly all exported `<TaxiwayPath>` elements. The other
+mappings (`Taxi`→`TAXI`, `Runway`→`RUNWAY`, `Parking`→`PARKING`,
+`Closed`→`CLOSED`, `Vehicle`→`VEHICLE`, `Road`→`ROAD`) are unchanged.
+Regression-tested (`Build_TaxiPathWithPathType_MapsToTaxiXmlType`).
+
+**CONFIRMED against a live import (2026-09-16):** with both fixes applied
+(the `surface`/`drawSurface`/etc. attributes, and `TaxiPathType.Path` mapping
+to `type="TAXI"`), the user re-exported and re-imported and `<TaxiwayPath>`
+elements now import successfully. This closes the investigation — both
+fixes were required together; neither alone was sufficient.
+
+Minor same-day follow-up: the user inspected a confirmed-working exported
+`<TaxiwayPath>` element directly and asked for the exported attribute order
+to match it exactly (attribute order has no schema/parsing meaning, but
+keeps AirportSmith's output diffable against future Scenery-Editor-authored
+samples). While matching that order, one more gap surfaced: the sample had
+`weightLimit="0"`, which AirportSmith's export wasn't emitting at all —
+`TAXI_PATH.WEIGHT` isn't requested/stored anywhere (`TaxiPathSegment` has no
+`WeightLimit` property), so `weightLimit="0"` (the SDK-documented "no limit"
+default) is now emitted as a fixed default, same treatment as
+`drawSurface`/`drawDetail`/etc. above. Not believed to be load-bearing for
+the import (the confirmed-working live-import test above didn't have this
+attribute), but included for consistency. Actually capturing real per-path
+`WEIGHT` data from SimConnect remains unimplemented — out of scope unless a
+future editing feature needs it.
+
+Remaining loose end, not blocking (still not investigated): the `RUNWAY`-type
+path length anomalies noted earlier in this section (`Start=2/End=1`,
+`Start=14/End=13`, `Start=286/End=8`) and the "overloaded index space" theory
+for `RUNWAY`-type paths specifically.
+
+**Correctness fix, same day, flagged by the user against a real exported
+file:** `number`/`designator` are documented as valid *only* when
+`type="RUNWAY"` — the export was emitting `number` on any path whose
+`RunwayNumber` was in the 0-36 range regardless of path type, which put an
+invalid `number` attribute on every `TAXI`-type path SimConnect reports a
+runway association for (a common, real case — e.g. an entrance/exit taxiway
+near a specific runway — not an edge case). Fixed: `number`/`designator` are
+now only emitted when the path's mapped XML type is `"RUNWAY"`; a non-RUNWAY
+path with a nonzero `RunwayNumber` instead gets a warning and the attributes
+are left off entirely (that association currently has no valid place in the
+XML format for a non-RUNWAY path). Regression-tested
+(`Build_TaxiTypePathWithRunwayAssociation_OmitsNumberAndDesignatorAndWarns`,
+`Build_RunwayTypePathWithRunwayAssociation_IncludesNumberAndDesignator`).
+
 ## Proposed v0.1+ epics (not yet committed — for prioritization with the user)
 
 These are draft candidates surfaced by the research above, not approved user stories. Each needs to be broken into concrete acceptance criteria once prioritized.
 
 1. **Edit runway geometry/taxiway routing/parking data.** UI to modify runway surface/length, taxiway routing, and parking spot type/heading/radius. Taxi path naming/lighting and runway lighting (edge lights, VASI/PAPI, approach lights) are already committed above — this covers the rest of the original "Edit runway/taxiway/parking data" idea.
-2. **Generate SDK-compatible `<Airport>` XML.** Produce Dev-Mode/PackageTool-compatible XML for the edited airport, including the `<Exclude>` entries needed to properly override the stock version. Still needed before any edit (including the ones committed above) can take effect in MSFS.
-3. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
+2. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
 
 ## Test coverage
 - `MainViewModelTests` (`AirportSmith.Tests`) covers: successful load populates
@@ -1111,3 +1468,79 @@ These are draft candidates surfaced by the research above, not approved user sto
   rendering/editing and real file/SimConnect I/O) — verified manually per
   `CLAUDE.md`'s testing policy, including confirming `RUNWAY.EDGE_LIGHTS`'s
   INT8 marshaling against a live sim (see the Known limitations above).
+- `GeoProjectionTests` (`AirportSmith.Tests`) covers: `UnprojectLocalPoint` is
+  the exact inverse of `ProjectLatLon` for representative reference points/
+  offsets (round-trip within a small epsilon); `AirportDiagramProjectorTests`
+  was updated only to call through the extracted `GeoProjection` helper
+  (behavior-preserving refactor, no new/changed assertions).
+- `AirportXmlExporterTests` (`AirportSmith.Tests`, pure via `Build`, no fakes
+  needed) covers: the root `<FSData version="9.0">` and `<Airport>`
+  attributes match the input `AirportDetails`; `<DeleteAirport>` has exactly
+  `deleteAllRunways`/`deleteAllTaxiways` set and no frequency/jetway flags; a
+  fully-populated runway (edge lights, all 4 VASI slots including the new
+  bias/spacing fields, both approach light systems, all 6 pavement features)
+  round-trips into the correct attributes/child elements with correct
+  enum-to-string mapping; a runway with all-null optional slots omits those
+  elements entirely rather than emitting empty/default ones; the two
+  synthesized `<RunwayStart>` positions, re-projected through
+  `GeoProjection.ProjectLatLon`, land within a small epsilon of the runway's
+  own computed threshold points; `<TaxiwayPoint>`/`<TaxiwayParking>`/
+  `<TaxiName>`/`<TaxiwayPath>` appear in that exact schema-required order; a
+  taxi path with `TaxiPathType.Unknown`/`.PaintedLine` is skipped and adds a
+  warning; a taxi name over 8 characters is truncated and warns; an
+  unmapped/out-of-range surface or parking type/name/suffix code falls back
+  to its documented safe default and warns; no `<Jetway>` or `<Com>` element
+  is ever emitted regardless of input; `Export` (real file write, to a temp
+  directory — never `AppDataHelper.AppDataPath`, per `CLAUDE.md`'s guardrail)
+  produces a file `XDocument.Load` reads back with the same structure `Build`
+  produced; per the first-round revision above, a taxi path with one
+  resolved end and one unresolved end emits no `<TaxiwayPoint>` for its
+  resolved end when nothing else references it
+  (`Build_PathWithOneUnresolvedEnd_DoesNotEmitOrphanedTaxiwayPointForTheResolvedEnd`),
+  and a mix of one exportable and one partially-unresolved path emits
+  `<TaxiwayPoint>`s only for the indices the exported path(s) actually use
+  (`Build_MixOfExportableAndUnresolvedPaths_OnlyEmitsPointsUsedByExportedPaths`);
+  per the second-round revision above, a point with `TaxiPointType.HoldShort`
+  and `TaxiPointOrientation.Reverse` emits `type="HOLD_SHORT"
+  orientation="REVERSE"`, while an unrelated point with no resolved type on
+  the same path still falls back to `type="NORMAL"` with no `orientation`
+  attribute at all (`Build_TaxiwayPointWithHoldShortType_MapsTypeAndOrientation`);
+  per the third-round revision above, a `Type == Parking` path's `EndIndex`
+  matching a `TaxiParkingSpot.ItemIndex` produces a `<TaxiwayParking>` with
+  that same `index`, a `<TaxiwayPath end="...">` matching it, and no
+  redundant `<TaxiwayPoint>` at that index at all — only the `Start` end
+  still gets one
+  (`Build_ParkingTypePathEnd_ResolvesToTaxiwayParkingNotASynthesizedTaxiwayPoint`);
+  colliding/default `ItemIndex` values across parking spots (an older saved
+  project) fall back to sequential numbering with a warning rather than
+  exporting duplicate `<TaxiwayParking>` indices
+  (`Build_ParkingSpotItemIndicesCollide_FallsBackToSequentialNumberingAndWarns`);
+  per the "OPEN, resolved" investigation above, every exported `<TaxiwayPath>`
+  carries `surface="ASPHALT"` plus the Editor's own observed
+  `drawSurface`/`drawDetail`/`groundMerging`/`excludeVegetationAround`/
+  `excludeVegetationInside` defaults, and the export emits one warning (not
+  one per path) noting the surface value is synthesized, not real SimConnect
+  data
+  (`Build_MappableTaxiPath_HasSurfaceAndSceneryEditorDefaultAttributes`); per
+  that investigation's same-day follow-up, `TaxiPathType.Path` (what
+  SimConnect reports for virtually every real taxi path) maps to XML
+  `type="TAXI"`, not the schema's own literal `"PATH"` value
+  (`Build_TaxiPathWithPathType_MapsToTaxiXmlType`) — both fixes together are
+  now confirmed against a live Scenery Editor import.
+  `Build_MappableTaxiPath_HasSurfaceAndSceneryEditorDefaultAttributes` also
+  covers `weightLimit="0"`, added alongside the attribute-order cleanup that
+  matched a confirmed-working sample the user inspected directly;
+  `number`/`designator` are only emitted when a path's XML type is
+  `"RUNWAY"` — a non-RUNWAY path with a runway association gets neither
+  attribute and a warning instead
+  (`Build_TaxiTypePathWithRunwayAssociation_OmitsNumberAndDesignatorAndWarns`,
+  `Build_RunwayTypePathWithRunwayAssociation_IncludesNumberAndDesignator`).
+- `MainViewModelTests` additionally covers: `ExportXmlCommand.CanExecute`
+  depends on whether an `IAirportXmlExporter` and `IFileDialogService` were
+  injected and whether an airport is loaded; executing it delegates to the
+  exporter and sets `LastXmlExportPath`/`LastXmlExportWarnings`; a cancelled
+  save-file dialog leaves both untouched — via the new
+  `Fakes/FakeAirportXmlExporter`.
+- Actually importing the generated XML into the MSFS 2024 SDK Dev Mode
+  Scenery Editor (or compiling it with `bglcomp`) is not covered by automated
+  tests (requires MSFS/the SDK) — verified manually.

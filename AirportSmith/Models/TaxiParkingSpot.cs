@@ -14,6 +14,18 @@ namespace AirportSmith.Models;
 // coordinates.
 public class TaxiParkingSpot
 {
+    // The TAXI_PARKING row's own ItemIndex (distinct from Number, the
+    // user-facing gate number) — this is what a TaxiPathSegment of
+    // Type == Parking's EndIndex actually references (confirmed the hard
+    // way: a real airport's TAXI_PATH.END for a PARKING-type path pointed
+    // at a TAXI_PARKING ItemIndex, not a TAXI_POINT index — the SDK docs'
+    // START/END description, "the index number of taxiway point OR parking
+    // space", is literal, not a loose paraphrase). Defaults to 0 for a
+    // project saved before this field was added — see
+    // AirportXmlExporter.ComputeParkingIndices for how that's handled
+    // safely rather than assumed unique.
+    public int ItemIndex { get; set; }
+
     public int Number { get; set; }
     public int Type { get; set; }
     public int NameCode { get; set; }

@@ -14,6 +14,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -33,14 +34,27 @@
                     Visibility="{Binding IsDevModeImportAvailable, Converter={StaticResource BoolToVisibility}}"/>
             <Button Content="Load Project" Command="{Binding LoadProjectCommand}" Margin="20,0,0,0" Padding="10,2"
                     Visibility="{Binding IsProjectStoreAvailable, Converter={StaticResource BoolToVisibility}}"/>
+            <Button Content="Export Airport XML" Command="{Binding ExportXmlCommand}" Margin="10,0,0,0" Padding="10,2"
+                    Visibility="{Binding IsXmlExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
         </StackPanel>
 
         <TextBlock Grid.Row="1" Text="{Binding LastExportPath, StringFormat='Saved to: {0}'}" Margin="0,4,0,0"
                     Visibility="{Binding IsDevModeExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
 
-        <TextBlock Grid.Row="2" Text="{Binding ErrorMessage}" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        <TextBlock Grid.Row="2" Text="{Binding LastXmlExportPath, StringFormat='Airport XML exported to: {0}'}" Margin="0,4,0,0"
+                    Visibility="{Binding IsXmlExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+        <StackPanel Grid.Row="2" Margin="0,22,0,0"
+                    Visibility="{Binding LastXmlExportWarnings.Count, Converter={StaticResource CountToVisibility}}">
+            <TextBlock Foreground="DarkOrange" Text="{Binding LastXmlExportWarnings.Count, StringFormat='Export warnings ({0}):'}"/>
+            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto" Margin="0,2,0,0">
+                <TextBlock Foreground="DarkOrange" TextWrapping="Wrap"
+                           Text="{Binding LastXmlExportWarnings, Converter={StaticResource StringListToNewlines}, Mode=OneWay}"/>
+            </ScrollViewer>
+        </StackPanel>
 
-        <TabControl Grid.Row="3" Margin="0,10,0,0" DataContext="{Binding Airport}">
+        <TextBlock Grid.Row="3" Text="{Binding ErrorMessage}" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+        <TabControl Grid.Row="4" Margin="0,10,0,0" DataContext="{Binding Airport}">
             <TabItem Header="Overview">
                 <StackPanel Margin="10">
                     <TextBlock Text="{Binding Name}" FontSize="18" FontWeight="Bold"/>
