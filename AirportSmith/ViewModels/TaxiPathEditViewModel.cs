@@ -21,6 +21,15 @@ public class TaxiPathEditViewModel : ViewModelBase
         _segment = segment;
     }
 
+    // Read-only — the sim's own TAXI_POINT indices this path connects
+    // (matches the Edit tab's Taxiway Points grid rows/diagram dots by
+    // Index, and the exported <TaxiwayPath start="..."/end="...">), not
+    // independently editable here. Shown so a path's row can be
+    // cross-referenced against the specific points it connects without
+    // switching tabs or guessing from the diagram alone.
+    public int StartIndex => _segment.StartIndex;
+    public int EndIndex => _segment.EndIndex;
+
     public Guid? TaxiNameId
     {
         get => _segment.TaxiNameId;

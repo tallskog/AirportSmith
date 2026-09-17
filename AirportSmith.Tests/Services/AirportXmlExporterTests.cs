@@ -503,6 +503,74 @@ public class AirportXmlExporterTests
         Assert.Equal("LEFT", path.Attribute("designator")!.Value);
     }
 
+    // Regression test flagged by the user against a real exported file
+    // (2026-09-17, OIBK): `name` is documented as valid only when type is
+    // NOT "RUNWAY" — the opposite restriction from number/designator above.
+    // A RUNWAY-type path pointing at a resolvable TaxiName (SimConnect's
+    // TAXI_NAME association isn't itself type-gated, so this happens in
+    // practice) must NOT get a `name` attribute — suspected of causing the
+    // Scenery Editor to reject the whole <TaxiwayPath> element, which
+    // orphans any <TaxiwayPoint> only reachable through it (matching the
+    // "point not linked anywhere" symptom reported against OIBK's points 0
+    // and 12, both only connected via RUNWAY-type paths).
+    [Fact]
+    public void Build_RunwayTypePathWithResolvableName_OmitsNameAndWarns()
+    {
+        var taxiName = new TaxiName { Value = "0" };
+        var airport = Airport(a =>
+        {
+            a.TaxiNames.Add(taxiName);
+            a.TaxiPaths.Add(new TaxiPathSegment
+            {
+                Type = TaxiPathType.Runway,
+                StartIndex = 0,
+                EndIndex = 1,
+                WidthMeters = 30,
+                TaxiNameId = taxiName.Id,
+                RunwayNumber = 9,
+                RunwayDesignator = TaxiPathRunwayDesignator.Left,
+                StartXMeters = 0,
+                StartZMeters = 0,
+                EndXMeters = 50,
+                EndZMeters = 0,
+            });
+        });
+
+        var result = AirportXmlExporter.Build(airport);
+        var path = result.Document.Root!.Element("Airport")!.Elements("TaxiwayPath").Single();
+
+        Assert.Null(path.Attribute("name"));
+        Assert.Contains(result.Warnings, w => w.Contains("RUNWAY", StringComparison.Ordinal) && w.Contains("name", StringComparison.Ordinal));
+    }
+
+    // Counterpart: a non-RUNWAY path still gets `name`, same as before this fix.
+    [Fact]
+    public void Build_NonRunwayTypePathWithResolvableName_IncludesName()
+    {
+        var taxiName = new TaxiName { Value = "A" };
+        var airport = Airport(a =>
+        {
+            a.TaxiNames.Add(taxiName);
+            a.TaxiPaths.Add(new TaxiPathSegment
+            {
+                Type = TaxiPathType.Taxi,
+                StartIndex = 0,
+                EndIndex = 1,
+                WidthMeters = 20,
+                TaxiNameId = taxiName.Id,
+                StartXMeters = 0,
+                StartZMeters = 0,
+                EndXMeters = 50,
+                EndZMeters = 0,
+            });
+        });
+
+        var path = AirportXmlExporter.Build(airport).Document
+            .Root!.Element("Airport")!.Elements("TaxiwayPath").Single();
+
+        Assert.Equal("0", path.Attribute("name")!.Value);
+    }
+
     // Regression test for the 2026-09-15/16 "Scenery Editor imports zero
     // <TaxiwayPath> elements" investigation (see requirements.md): a real
     // Editor-authored <TaxiwayPath> always carries a `surface` attribute

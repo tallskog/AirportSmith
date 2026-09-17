@@ -104,4 +104,19 @@ public class TaxiPathEditViewModelTests
 
         Assert.Equal(nameId, vm.TaxiNameId);
     }
+
+    [Fact]
+    public void StartIndexAndEndIndex_ReadThroughFromWrappedSegment_AreReadOnly()
+    {
+        var segment = new TaxiPathSegment { StartIndex = 3, EndIndex = 7 };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        Assert.Equal(3, vm.StartIndex);
+        Assert.Equal(7, vm.EndIndex);
+
+        // Changing the underlying segment (e.g. re-resolved on reload) is
+        // reflected live, same as every other pass-through property here.
+        segment.StartIndex = 10;
+        Assert.Equal(10, vm.StartIndex);
+    }
 }

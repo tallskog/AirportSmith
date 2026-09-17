@@ -37,6 +37,64 @@ public class MainViewModelTests
         return airport;
     }
 
+    // Two chained segments sharing a middle point index (1), giving 3
+    // distinct TaxiwayPointShapes (indices 0, 1, 2) — enough to exercise
+    // multi-select and "everything else still hidden" filtering.
+    // BuildAirportWithTwoTaxiways above can't be reused here since its
+    // segments leave StartIndex/EndIndex at their default (0), which would
+    // collapse every point onto a single index.
+    private static AirportDetails BuildAirportWithThreeTaxiwayPoints()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 0, EndIndex = 1,
+            StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0,
+        });
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 1, EndIndex = 2,
+            StartXMeters = 10, StartZMeters = 0, EndXMeters = 20, EndZMeters = 0,
+        });
+        return airport;
+    }
+
+    // Two Taxi-typed segments differing in every filterable field — Name,
+    // Type isn't varied here (both Taxi, so TaxiwaySegmentShapes exist for
+    // both, needed by the selection+filter combination test), Start/End
+    // index, runway number, left/right edge type/lighting, center
+    // line/lighting, so each field's own filter can be exercised in
+    // isolation against a real non-trivial dataset.
+    private static AirportDetails BuildAirportForTaxiPathFiltering(out TaxiName nameA, out TaxiName nameB)
+    {
+        nameA = new TaxiName { Value = "Alpha" };
+        nameB = new TaxiName { Value = "Bravo" };
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiNames.Add(nameA);
+        airport.TaxiNames.Add(nameB);
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, TaxiNameId = nameA.Id, WidthMeters = 10,
+            StartIndex = 0, EndIndex = 1, RunwayNumber = 9,
+            RunwayDesignator = TaxiPathRunwayDesignator.Left,
+            LeftEdge = TaxiEdgeType.Solid, LeftEdgeLighted = true,
+            RightEdge = TaxiEdgeType.Dashed, RightEdgeLighted = false,
+            CenterLine = true, CenterLineLighted = false,
+            StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0,
+        });
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, TaxiNameId = nameB.Id, WidthMeters = 10,
+            StartIndex = 5, EndIndex = 6, RunwayNumber = 27,
+            RunwayDesignator = TaxiPathRunwayDesignator.Right,
+            LeftEdge = TaxiEdgeType.Dashed, LeftEdgeLighted = false,
+            RightEdge = TaxiEdgeType.Solid, RightEdgeLighted = true,
+            CenterLine = false, CenterLineLighted = true,
+            StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0,
+        });
+        return airport;
+    }
+
     // Synchronous alternative to LoadCommand for tests that just need an
     // airport loaded (project load doesn't await a SimConnect round trip).
     private static MainViewModel CreateViewModelWithAirport(AirportDetails airport)
@@ -74,7 +132,7 @@ public class MainViewModelTests
         var taxiName = new TaxiName { Value = "A" };
         var airport = new AirportDetails { Icao = "EFHK" };
         airport.TaxiNames.Add(taxiName);
-        airport.TaxiPaths.Add(new TaxiPathSegment { TaxiNameId = taxiName.Id });
+        airport.TaxiPaths.Add(new TaxiPathSegment { TaxiNameId = taxiName.Id, StartIndex = 0, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
         airport.Runways.Add(new Runway { PrimaryDesignation = "04L" });
         var fake = new FakeSimConnectService
         {
@@ -91,6 +149,8 @@ public class MainViewModelTests
         Assert.Equal("A", vm.TaxiNames[0].Value);
         Assert.Single(vm.RunwayEdits);
         Assert.Equal("04L", vm.RunwayEdits[0].PrimaryDesignation);
+        Assert.Equal(2, vm.TaxiwayPointEdits.Count);
+        Assert.Equal([0, 1], vm.TaxiwayPointEdits.Select(p => p.Index));
     }
 
     [Fact]
@@ -107,6 +167,7 @@ public class MainViewModelTests
 
         Assert.Empty(vm.TaxiPathEdits);
         Assert.Empty(vm.RunwayEdits);
+        Assert.Empty(vm.TaxiwayPointEdits);
     }
 
     [Fact]
@@ -451,6 +512,36 @@ public class MainViewModelTests
         Assert.Single(airport.TaxiNames);
         Assert.Single(vm.TaxiNames);
         Assert.Equal(airport.TaxiNames[0].Id, vm.TaxiNames[0].Id);
+    }
+
+    // Regression test for a real crash: TaxiNamesPicker must be a genuinely
+    // separate collection INSTANCE from TaxiNames (not just an equivalent
+    // one), even though it mirrors the same items live — see
+    // MainViewModel.TaxiNamesPicker's own doc comment. Sharing the exact
+    // same ObservableCollection instance between the Taxi Names grid and
+    // every Taxi Paths row's Name-column ComboBox meant they all shared one
+    // WPF default CollectionView, and editing a row in the Taxi Names grid
+    // (putting that shared view into an edit-item transaction) while any
+    // Name ComboBox elsewhere re-attached its ItemsSource binding threw
+    // InvalidOperationException and crashed the app — reproduced directly
+    // and confirmed via a .NET Runtime crash log entry against a real
+    // build. A different collection instance gets its own independent
+    // default view, sidestepping the conflict entirely.
+    [Fact]
+    public void TaxiNamesPicker_IsASeparateInstanceFromTaxiNames_ButMirrorsItsContentsLive()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var vm = CreateViewModelWithAirport(airport);
+
+        Assert.NotSame(vm.TaxiNames, vm.TaxiNamesPicker);
+        Assert.Empty(vm.TaxiNamesPicker);
+
+        vm.AddTaxiNameCommand.Execute(null);
+        Assert.Single(vm.TaxiNamesPicker);
+        Assert.Equal(vm.TaxiNames[0].Id, vm.TaxiNamesPicker[0].Id);
+
+        vm.DeleteTaxiNameCommand.Execute(vm.TaxiNames[0]);
+        Assert.Empty(vm.TaxiNamesPicker);
     }
 
     [Fact]
@@ -927,5 +1018,224 @@ public class MainViewModelTests
         Assert.Null(exporter.LastExported);
         Assert.Null(vm.LastXmlExportPath);
         Assert.Empty(vm.LastXmlExportWarnings);
+    }
+
+    // Same "click a shape, see just that shape's data" pattern as
+    // ClickingDiagramTaxiway_FiltersVisibleTaxiPathEditsToSelection, for
+    // taxiway points — an independent selection from taxi paths, but
+    // ClearTaxiwaySelectionCommand (the shared background-click handler)
+    // resets both at once.
+    [Fact]
+    public void ClickingDiagramTaxiwayPoint_FiltersVisibleTaxiwayPointEditsToSelection()
+    {
+        var airport = BuildAirportWithThreeTaxiwayPoints();
+        var vm = CreateViewModelWithAirport(airport);
+        var point0 = vm.Diagram!.TaxiwayPoints[0];
+        var point1 = vm.Diagram!.TaxiwayPoints[1];
+
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, ExtendSelection: false));
+        Assert.Equal(vm.TaxiwayPointEdits[0], Assert.Single(vm.VisibleTaxiwayPointEdits));
+
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point1, ExtendSelection: true));
+        Assert.Equal(2, vm.VisibleTaxiwayPointEdits.Count);
+        Assert.Contains(vm.TaxiwayPointEdits[0], vm.VisibleTaxiwayPointEdits);
+        Assert.Contains(vm.TaxiwayPointEdits[1], vm.VisibleTaxiwayPointEdits);
+
+        vm.ClearTaxiwaySelectionCommand.Execute(null);
+        Assert.Equal(3, vm.VisibleTaxiwayPointEdits.Count);
+        Assert.All(vm.Diagram.TaxiwayPoints, p => Assert.False(p.IsSelected));
+    }
+
+    [Fact]
+    public void TogglingTaxiwayPointSelection_PlainClickReplacesSelection_CtrlClickToggles()
+    {
+        var airport = BuildAirportWithThreeTaxiwayPoints();
+        var vm = CreateViewModelWithAirport(airport);
+        var point0 = vm.Diagram!.TaxiwayPoints[0];
+        var point1 = vm.Diagram!.TaxiwayPoints[1];
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, ExtendSelection: false));
+
+        // A plain click on a different point replaces the selection...
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point1, ExtendSelection: false));
+        Assert.False(point0.IsSelected);
+        Assert.True(point1.IsSelected);
+
+        // ...while a Ctrl+click toggles membership without touching the rest.
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, ExtendSelection: true));
+        Assert.True(point0.IsSelected);
+        Assert.True(point1.IsSelected);
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point1, ExtendSelection: true));
+        Assert.True(point0.IsSelected);
+        Assert.False(point1.IsSelected);
+    }
+
+    [Fact]
+    public void HideAllTaxiwayPoints_HidesEveryPointShape_AndClearsSelection()
+    {
+        var airport = BuildAirportWithThreeTaxiwayPoints();
+        var vm = CreateViewModelWithAirport(airport);
+        var point0 = vm.Diagram!.TaxiwayPoints[0];
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, ExtendSelection: false));
+
+        vm.HideAllTaxiwayPoints = true;
+
+        Assert.All(vm.Diagram.TaxiwayPoints, p => Assert.False(p.IsVisible));
+        // A hidden point has nothing to highlight — same reasoning as
+        // RefreshAllTaxiwayVisibility hiding a selected taxi path.
+        Assert.False(point0.IsSelected);
+        Assert.Equal(3, vm.VisibleTaxiwayPointEdits.Count);
+
+        vm.HideAllTaxiwayPoints = false;
+        Assert.All(vm.Diagram.TaxiwayPoints, p => Assert.True(p.IsVisible));
+    }
+
+    [Fact]
+    public void LoadingNewAirport_ResetsHideAllTaxiwayPointsAndShapeVisibility()
+    {
+        var airport1 = BuildAirportWithThreeTaxiwayPoints();
+        var store = new FakeAirportProjectStore();
+        store.Save(airport1);
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store) { IcaoInput = airport1.Icao };
+        vm.LoadProjectCommand.Execute(null);
+        vm.HideAllTaxiwayPoints = true;
+
+        var airport2 = BuildAirportWithThreeTaxiwayPoints();
+        airport2.Icao = "EGLL";
+        store.Save(airport2);
+        vm.IcaoInput = "EGLL";
+        vm.LoadProjectCommand.Execute(null);
+
+        Assert.False(vm.HideAllTaxiwayPoints);
+        Assert.All(vm.Diagram!.TaxiwayPoints, p => Assert.True(p.IsVisible));
+    }
+
+    [Fact]
+    public void TaxiPathFilter_NameFilter_MatchesResolvedDisplayNameCaseInsensitively()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out var nameA, out _);
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.TaxiPathFilter.NameFilter = "alp";
+
+        var match = Assert.Single(vm.VisibleTaxiPathEdits);
+        Assert.Equal(nameA.Id, match.TaxiNameId);
+    }
+
+    [Fact]
+    public void TaxiPathFilter_StartAndEndIndexFilter_MatchesSubstringAgainstEachIndex()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.TaxiPathFilter.StartIndexFilter = "5";
+        Assert.Equal(5, Assert.Single(vm.VisibleTaxiPathEdits).StartIndex);
+
+        vm.TaxiPathFilter.StartIndexFilter = null;
+        vm.TaxiPathFilter.EndIndexFilter = "1";
+        Assert.Equal(1, Assert.Single(vm.VisibleTaxiPathEdits).EndIndex);
+    }
+
+    [Fact]
+    public void TaxiPathFilter_RunwayNumberAndDesignatorFilters_MatchExactly()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.TaxiPathFilter.RunwayNumberFilter = "27";
+        Assert.Equal(27, Assert.Single(vm.VisibleTaxiPathEdits).RunwayNumber);
+
+        vm.TaxiPathFilter.RunwayNumberFilter = null;
+        vm.TaxiPathFilter.RunwayDesignatorFilter = TaxiPathRunwayDesignator.Left;
+        Assert.Equal(TaxiPathRunwayDesignator.Left, Assert.Single(vm.VisibleTaxiPathEdits).RunwayDesignator);
+    }
+
+    [Fact]
+    public void TaxiPathFilter_EdgeTypeAndLightingBoolFilters_MatchExactly()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.TaxiPathFilter.LeftEdgeFilter = TaxiEdgeType.Dashed;
+        Assert.Equal(TaxiEdgeType.Dashed, Assert.Single(vm.VisibleTaxiPathEdits).LeftEdge);
+
+        vm.TaxiPathFilter.LeftEdgeFilter = null;
+        vm.TaxiPathFilter.CenterLineLightedFilter = true;
+        Assert.True(Assert.Single(vm.VisibleTaxiPathEdits).CenterLineLighted);
+    }
+
+    // The diagram click-to-select filter and the per-column field filters
+    // combine (AND) rather than one replacing the other.
+    [Fact]
+    public void TaxiPathFilter_CombinesWithDiagramSelection()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out var nameB);
+        var vm = CreateViewModelWithAirport(airport);
+        var shape0 = vm.Diagram!.TaxiwaySegments[0];
+        var shape1 = vm.Diagram!.TaxiwaySegments[1];
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape1, ExtendSelection: true));
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count); // both selected, no field filter yet
+
+        vm.TaxiPathFilter.NameFilter = "Bravo";
+
+        var match = Assert.Single(vm.VisibleTaxiPathEdits);
+        Assert.Equal(nameB.Id, match.TaxiNameId);
+    }
+
+    [Fact]
+    public void ClearTaxiPathFilterCommand_ResetsFiltersAndReflectsCanExecute()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        Assert.False(vm.ClearTaxiPathFilterCommand.CanExecute(null));
+
+        vm.TaxiPathFilter.RunwayNumberFilter = "9";
+        Assert.True(vm.ClearTaxiPathFilterCommand.CanExecute(null));
+        Assert.Single(vm.VisibleTaxiPathEdits);
+
+        vm.ClearTaxiPathFilterCommand.Execute(null);
+
+        Assert.False(vm.ClearTaxiPathFilterCommand.CanExecute(null));
+        Assert.False(vm.TaxiPathFilter.HasAnyFilter);
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+    }
+
+    // A filter must reflect current field values live — editing a row out
+    // of matching a filter should drop it from VisibleTaxiPathEdits
+    // immediately, same as if that value had been there when the filter was
+    // first typed.
+    [Fact]
+    public void EditingAFilteredField_LiveRemovesRowFromVisibleWhenNoLongerMatching()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        vm.TaxiPathFilter.TypeFilter = TaxiPathType.Taxi;
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+
+        vm.TaxiPathEdits[0].Type = TaxiPathType.Runway;
+
+        Assert.Single(vm.VisibleTaxiPathEdits);
+        Assert.Equal(TaxiPathType.Taxi, vm.VisibleTaxiPathEdits[0].Type);
+    }
+
+    [Fact]
+    public void LoadingNewAirport_ResetsTaxiPathFilter()
+    {
+        var airport1 = BuildAirportForTaxiPathFiltering(out _, out _);
+        var store = new FakeAirportProjectStore();
+        store.Save(airport1);
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store) { IcaoInput = airport1.Icao };
+        vm.LoadProjectCommand.Execute(null);
+        vm.TaxiPathFilter.NameFilter = "Alpha";
+        Assert.Single(vm.VisibleTaxiPathEdits);
+
+        var airport2 = BuildAirportForTaxiPathFiltering(out _, out _);
+        airport2.Icao = "EGLL";
+        store.Save(airport2);
+        vm.IcaoInput = "EGLL";
+        vm.LoadProjectCommand.Execute(null);
+
+        Assert.False(vm.TaxiPathFilter.HasAnyFilter);
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
     }
 }

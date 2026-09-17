@@ -316,7 +316,15 @@ public static class AirportDiagramProjector
         {
             var segment = airport.TaxiPaths[sourceIndex];
             var type = (TaxiPathType)segment.Type;
-            if (type is not (TaxiPathType.Taxi or TaxiPathType.Path))
+            // Runway included alongside Taxi/Path so a point only reachable
+            // via a runway entrance/exit stub still renders as visibly
+            // connected — see TaxiwaySegmentShape.IsRunwayType's own doc
+            // comment for why this matters (a real OIBK anomaly this was
+            // fixed for). Parking stays excluded: its End doesn't reference
+            // a taxi point at all (see BuildTaxiwayPoints below), so there's
+            // no sensible line endpoint to draw for it, and its connection
+            // to the network is already shown via the ParkingSpot marker.
+            if (type is not (TaxiPathType.Taxi or TaxiPathType.Path or TaxiPathType.Runway))
                 continue;
             if (segment.StartXMeters is not { } sx || segment.StartZMeters is not { } sz ||
                 segment.EndXMeters is not { } ex || segment.EndZMeters is not { } ez)
@@ -348,6 +356,25 @@ public static class AirportDiagramProjector
             taxiways.Add((segment, sourceIndex, start, end, widthCorners, midPoint));
         }
 
+        // Same distinct-index point synthesis AirportXmlExporter.BuildTaxiwayPoints
+        // uses (every path's Start, plus its End unless the path is
+        // Type==Parking — see that method's own comment for why) — kept as an
+        // independent copy rather than a shared helper since the exporter
+        // operates on its own already-filtered "will actually be exported"
+        // path list and returns XML elements, not diagram shapes. Deliberately
+        // NOT filtered to TaxiPathType.Taxi/.Path like the taxiwayS segment
+        // loop above: a point can only be usefully sanity-checked on the
+        // diagram (see requirements.md's open RUNWAY-type-path investigation)
+        // if it's shown regardless of which path type resolved it.
+        var taxiwayPointsByIndex = new Dictionary<int, LocalPoint>();
+        foreach (var segment in airport.TaxiPaths)
+        {
+            if (segment.StartXMeters is { } sx && segment.StartZMeters is { } sz)
+                taxiwayPointsByIndex.TryAdd(segment.StartIndex, new LocalPoint(sx, sz));
+            if (segment.Type != TaxiPathType.Parking && segment.EndXMeters is { } ex && segment.EndZMeters is { } ez)
+                taxiwayPointsByIndex.TryAdd(segment.EndIndex, new LocalPoint(ex, ez));
+        }
+
         var parkingSpots = new List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)>();
         foreach (var spot in airport.ParkingSpots)
         {
@@ -361,7 +388,7 @@ public static class AirportDiagramProjector
             parkingSpots.Add((spot, center, tip));
         }
 
-        var (minX, maxX, minZ, maxZ) = ComputeBounds(runways, taxiways, parkingSpots);
+        var (minX, maxX, minZ, maxZ) = ComputeBounds(runways, taxiways, parkingSpots, taxiwayPointsByIndex.Values);
 
         Point2D ToScreen(LocalPoint p) => new(
             p.X - minX + CanvasMarginMeters,
@@ -420,12 +447,17 @@ public static class AirportDiagramProjector
                     WidthCorners = t.WidthCorners.Select(ToScreen).ToList(),
                     MidPoint = ToScreen(t.MidPoint),
                     SourceIndex = t.SourceIndex,
+                    IsRunwayType = t.Segment.Type == TaxiPathType.Runway,
                 };
             }).ToList(),
             ParkingSpots = parkingSpots.Select(p => new ParkingSpotShape(
                 ToScreen(p.Center),
                 p.Spot.RadiusMeters,
                 ToScreen(p.HeadingTip))).ToList(),
+            TaxiwayPoints = taxiwayPointsByIndex
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp => new TaxiwayPointShape { Center = ToScreen(kvp.Value), Index = kvp.Key })
+                .ToList(),
         };
     }
 
@@ -441,7 +473,8 @@ public static class AirportDiagramProjector
     private static (double MinX, double MaxX, double MinZ, double MaxZ) ComputeBounds(
         List<RunwayWorkingData> runways,
         List<(TaxiPathSegment Segment, int SourceIndex, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)> taxiways,
-        List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)> parkingSpots)
+        List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)> parkingSpots,
+        IEnumerable<LocalPoint> taxiwayPoints)
     {
         var points = new List<LocalPoint>();
 
@@ -485,6 +518,11 @@ public static class AirportDiagramProjector
         }
         foreach (var t in taxiways)
             points.AddRange(t.WidthCorners);
+        // Ensures a point only resolved via a path type the taxiway-segment
+        // loop above excludes (e.g. RUNWAY) still expands the canvas to cover
+        // it, rather than landing off-screen — see this method's caller for
+        // why taxiwayPointsByIndex isn't filtered by path type.
+        points.AddRange(taxiwayPoints);
         foreach (var p in parkingSpots)
         {
             var radius = p.Spot.RadiusMeters;

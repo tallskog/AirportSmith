@@ -123,6 +123,20 @@ public class TaxiwaySegmentShape : INotifyPropertyChanged
     public required Point2D MidPoint { get; init; }
     public required int SourceIndex { get; init; }
 
+    // True for a TaxiPathType.Runway segment — these render with a distinct
+    // style (see AirportDiagramView's TaxiwaySegments template) rather than
+    // the ordinary named/unnamed blue/gray line, so they read as "this is
+    // the taxi path onto/off a runway, not an ordinary taxiway" at a glance.
+    // Included here (unlike Parking-type paths, which stay excluded from
+    // TaxiwaySegments entirely) specifically so a point ONLY reachable via a
+    // Runway-type path — e.g. a runway entrance/exit stub — still shows as
+    // visibly connected instead of looking like an orphaned dot next to the
+    // TaxiwayPoints red marker, which is exactly how a real OIBK data
+    // anomaly (points 0 and 12 only linked via Runway-type paths) went
+    // unnoticed in the diagram despite the Taxi Paths grid already showing
+    // the connecting row.
+    public required bool IsRunwayType { get; init; }
+
     private bool _hasName;
     public required bool HasName
     {
@@ -176,6 +190,55 @@ public sealed record TaxiwaySelectionRequest(TaxiwaySegmentShape Shape, bool Ext
 
 public record ParkingSpotShape(Point2D Center, double RadiusMeters, Point2D HeadingTip);
 
+// One distinct sim TAXI_POINT index, resolved from the airport's taxi paths —
+// the same distinct-index synthesis AirportXmlExporter.BuildTaxiwayPoints
+// uses to build <TaxiwayPoint> elements (every path's Start, plus its End
+// unless the path is Type==Parking, whose End references a TaxiwayParking
+// item rather than a taxi point), reused here so the diagram shows exactly
+// the points that would actually export. Index is the point's original sim
+// TAXI_POINT index — matches the Edit tab's Taxiway Points grid rows
+// (TaxiwayPointEditViewModel.Index) and the exported
+// <TaxiwayPoint index="...">; since both this list and that one are built
+// from the same distinct-index dedup in the same ascending order, matching a
+// clicked shape back to its grid row is done by Index directly rather than a
+// TaxiwaySegmentShape-style SourceIndex/list-position. A mutable class (not a
+// record) for the same reason as TaxiwaySegmentShape: IsSelected/IsVisible
+// need to change live without re-running the whole projection (which would
+// reset zoom/pan/selection).
+public class TaxiwayPointShape : INotifyPropertyChanged
+{
+    public required Point2D Center { get; init; }
+    public required int Index { get; init; }
+
+    private bool _isSelected;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetField(ref _isSelected, value);
+    }
+
+    private bool _isVisible = true;
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set => SetField(ref _isVisible, value);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
+    }
+}
+
+// Same idea as TaxiwaySelectionRequest, for a click on a TaxiwayPointShape —
+// see that record's own doc comment for ExtendSelection's meaning.
+public sealed record TaxiwayPointSelectionRequest(TaxiwayPointShape Shape, bool ExtendSelection);
+
 public class AirportDiagram
 {
     public double CanvasWidth { get; init; }
@@ -183,4 +246,5 @@ public class AirportDiagram
     public List<RunwayShape> Runways { get; init; } = [];
     public List<TaxiwaySegmentShape> TaxiwaySegments { get; init; } = [];
     public List<ParkingSpotShape> ParkingSpots { get; init; } = [];
+    public List<TaxiwayPointShape> TaxiwayPoints { get; init; } = [];
 }

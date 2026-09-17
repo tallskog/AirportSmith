@@ -141,35 +141,33 @@
                             <DataGrid Margin="0,0,0,4" MaxHeight="140" AutoGenerateColumns="False" CanUserAddRows="False"
                                       ItemsSource="{Binding DataContext.TaxiNames, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
-                                    <!-- A blank Value is a real, often heavily-shared sim entry (e.g.
-                                         paths to parking) — CellTemplate shows "(no name)" in gray
-                                         italics instead of a blank cell so it doesn't look like empty/
-                                         junk data, per user feedback after a blank entry was renamed
-                                         without realizing how many paths pointed at it. Still directly
-                                         editable (CellEditingTemplate) — double-click to give it a real
-                                         name if that's actually wanted. -->
+                                    <!-- A single always-editable TextBox, not a CellTemplate/
+                                         CellEditingTemplate split — a DataGridTemplateColumn's
+                                         CellEditingTemplate only activates on a SECOND click/interaction
+                                         once the cell is already "current," the same well-known WPF
+                                         quirk the checkbox columns elsewhere in this file already work
+                                         around (see their own comment) by using a real, always-interactive
+                                         control directly in CellTemplate — reported directly: clicking a
+                                         freshly-added row needed three clicks before typing actually
+                                         worked. A blank Value is a real, often heavily-shared sim entry
+                                         (e.g. paths to parking) — the "(no name)" watermark behind the
+                                         (transparent-background) TextBox shows through whenever Value is
+                                         empty, so it still doesn't look like an empty/junk row, per user
+                                         feedback after a blank entry was renamed without realizing how
+                                         many paths pointed at it; IsHitTestVisible="False" lets a click on
+                                         the watermark itself still reach the TextBox underneath. -->
                                     <DataGridTemplateColumn Header="Name" Width="*">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="{Binding DisplayValue}" VerticalAlignment="Center">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsUnnamed}" Value="True">
-                                                                    <Setter Property="FontStyle" Value="Italic"/>
-                                                                    <Setter Property="Foreground" Value="Gray"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
+                                                <Grid>
+                                                    <TextBlock Text="(no name)" FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center"
+                                                               IsHitTestVisible="False"
+                                                               Visibility="{Binding IsUnnamed, Converter={StaticResource BoolToVisibility}}"/>
+                                                    <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                                             Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
+                                                </Grid>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
-                                        <DataGridTemplateColumn.CellEditingTemplate>
-                                            <DataTemplate>
-                                                <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellEditingTemplate>
                                     </DataGridTemplateColumn>
                                     <DataGridTemplateColumn Width="60">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -185,17 +183,45 @@
                             <Button Content="Add Name" HorizontalAlignment="Left" Margin="0,0,0,14" Padding="10,2"
                                     Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
-                            <TextBlock Text="Taxi Paths" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock Text="Taxi Paths" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <!-- Every column below has its own filter, entered right in that
+                                     column's header (see MainViewModel.TaxiPathFilter/
+                                     MatchesTaxiPathFilter) — this just resets all of them at once,
+                                     since clearing 13 individual filters by hand would be tedious.
+                                     Only enabled while at least one is actually set. -->
+                                <Button Content="Clear Filters" Margin="12,0,0,0" Padding="8,1"
+                                        Command="{Binding DataContext.ClearTaxiPathFilterCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            </StackPanel>
                             <!-- Bound to VisibleTaxiPathEdits, not TaxiPathEdits — a diagram click
                                  filters this down to just the clicked path(s); with nothing selected on
-                                 the diagram it shows every path (see MainViewModel.RefreshTaxiwayFilter).
-                                 Selecting one or more rows here (independent of that filtering) also
-                                 highlights the matching taxiway(s) in the diagram for spatial context —
-                                 see SelectionChanged's code-behind handler and
-                                 MainViewModel.SyncTaxiwaySelectionFromRows. Deliberately doesn't open the
-                                 batch-edit popover — that only opens via a right-click on the diagram
-                                 (see ShowTaxiwayBatchEditPopover/OpenTaxiwayBatchEditCommand). -->
+                                 the diagram it shows every path. Each column's own filter (typed/picked
+                                 in its header, below the column label) narrows this further — the two
+                                 combine, neither replaces the other (see
+                                 MainViewModel.RefreshTaxiwayFilter). Selecting one or more rows here
+                                 (independent of that filtering) also highlights the matching
+                                 taxiway(s) in the diagram for spatial context — see SelectionChanged's
+                                 code-behind handler and MainViewModel.SyncTaxiwaySelectionFromRows.
+                                 Deliberately doesn't open the batch-edit popover — that only opens via
+                                 a right-click on the diagram (see
+                                 ShowTaxiwayBatchEditPopover/OpenTaxiwayBatchEditCommand). CanUserSortColumns=False
+                                 — every column header now hosts an interactive filter control, and
+                                 WPF's default click-to-sort on the header would otherwise fight with
+                                 clicking into one of those to type/pick a filter value. Each filter
+                                 header's own StackPanel sets its DataContext explicitly on Loaded (see
+                                 MainWindow.xaml.cs's TaxiPathFilterHeader_Loaded) rather than binding
+                                 through the usual RelativeSource AncestorType=Window pattern this file
+                                 uses everywhere else — confirmed the hard way that DataGridColumn.Header
+                                 content doesn't reliably participate in the normal visual-tree
+                                 RelativeSource walk (a header TextBox happily showed typed text locally,
+                                 but the bound TaxiPathFilter property it was supposed to update never
+                                 actually changed; routing through the DataGrid's own Tag instead of
+                                 Window didn't fix it either), unlike a plain sibling control (e.g. the
+                                 Taxiway Points grid's "Hide All from Diagram" checkbox). Each header's
+                                 filter controls below bind directly (e.g. {Binding NameFilter}) against
+                                 that explicitly-set DataContext. -->
                             <DataGrid x:Name="TaxiPathsGrid" Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      CanUserSortColumns="False"
                                       SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TaxiPathsGrid_SelectionChanged"
                                       ItemsSource="{Binding DataContext.VisibleTaxiPathEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
@@ -205,23 +231,75 @@
                                          select the cell and a second to actually toggle it. A real
                                          CheckBox in a DataGridTemplateColumn's CellTemplate is always
                                          interactive, so it toggles on the first click. -->
-                                    <DataGridTemplateColumn Header="Hide from Diagram" Width="120">
+                                    <DataGridTemplateColumn Width="120">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Hide from Diagram" TextWrapping="Wrap"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.BoolFilterOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                          SelectedValue="{Binding HiddenFromDiagramFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding IsHiddenFromDiagram, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Name" Width="150">
+                                    <DataGridTemplateColumn Width="150">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Name"/>
+                                                <TextBox Text="{Binding NameFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
-                                                <ComboBox ItemsSource="{Binding DataContext.TaxiNames, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                <!-- Bound to TaxiNamesPicker, NOT TaxiNames directly — see
+                                                     MainViewModel.TaxiNamesPicker's own doc comment: sharing
+                                                     the Taxi Names grid's own collection instance across
+                                                     every one of these ComboBoxes (one per row, up to
+                                                     hundreds) crashed the app with an
+                                                     InvalidOperationException the moment a Taxi Names row was
+                                                     being edited while any of these re-attached. -->
+                                                <ComboBox ItemsSource="{Binding DataContext.TaxiNamesPicker, RelativeSource={RelativeSource AncestorType=Window}}"
                                                           DisplayMemberPath="DisplayValue" SelectedValuePath="Id"
                                                           SelectedValue="{Binding TaxiNameId, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Type" Width="90">
+                                    <!-- Read-only — the sim's own TAXI_POINT indices this path connects
+                                         (see TaxiPathEditViewModel.StartIndex/EndIndex), cross-referenced
+                                         against the Taxiway Points grid/diagram dots below by this same
+                                         index. -->
+                                    <DataGridTextColumn Width="55" IsReadOnly="True" Binding="{Binding StartIndex}">
+                                        <DataGridTextColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Start"/>
+                                                <TextBox Text="{Binding StartIndexFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Width="55" IsReadOnly="True" Binding="{Binding EndIndex}">
+                                        <DataGridTextColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="End"/>
+                                                <TextBox Text="{Binding EndIndexFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTemplateColumn Width="90">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Type"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathTypesFilter}"
+                                                          SelectedItem="{Binding TypeFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathTypes}"
@@ -229,8 +307,24 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Rwy #" Width="55" Binding="{Binding RunwayNumber, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <DataGridTemplateColumn Header="Rwy Designator" Width="110">
+                                    <DataGridTextColumn Width="55" Binding="{Binding RunwayNumber, UpdateSourceTrigger=PropertyChanged}">
+                                        <DataGridTextColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Rwy #"/>
+                                                <TextBox Text="{Binding RunwayNumberFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTemplateColumn Width="110">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Rwy Designator" TextWrapping="Wrap"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathRunwayDesignatorsFilter}"
+                                                          SelectedItem="{Binding RunwayDesignatorFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPathRunwayDesignators}"
@@ -238,7 +332,15 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Left Edge" Width="95">
+                                    <DataGridTemplateColumn Width="95">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Left Edge"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypesFilter}"
+                                                          SelectedItem="{Binding LeftEdgeFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypes}"
@@ -246,14 +348,30 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Left Edge Lighted" Width="120">
+                                    <DataGridTemplateColumn Width="120">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Left Edge Lighted" TextWrapping="Wrap"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.BoolFilterOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                          SelectedValue="{Binding LeftEdgeLightedFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding LeftEdgeLighted, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Right Edge" Width="95">
+                                    <DataGridTemplateColumn Width="95">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Right Edge"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypesFilter}"
+                                                          SelectedItem="{Binding RightEdgeFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiEdgeTypes}"
@@ -261,24 +379,92 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Right Edge Lighted" Width="120">
+                                    <DataGridTemplateColumn Width="120">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Right Edge Lighted" TextWrapping="Wrap"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.BoolFilterOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                          SelectedValue="{Binding RightEdgeLightedFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding RightEdgeLighted, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Center Line" Width="90">
+                                    <DataGridTemplateColumn Width="90">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Center Line"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.BoolFilterOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                          SelectedValue="{Binding CenterLineFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding CenterLine, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Center Line Lighted" Width="125">
+                                    <DataGridTemplateColumn Width="125">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Loaded="TaxiPathFilterHeader_Loaded">
+                                                <TextBlock Text="Center Line Lighted" TextWrapping="Wrap"/>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.BoolFilterOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                          SelectedValue="{Binding CenterLineLightedFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                          FontWeight="Normal" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox HorizontalAlignment="Center" IsChecked="{Binding CenterLineLighted, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock Text="Taxiway Points" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <!-- A single all-or-nothing toggle, not a per-row checkbox like
+                                     TaxiPathEdits/RunwayEdits' "Hide from Diagram" column — there can be
+                                     hundreds of points, so a per-row control would be impractical for
+                                     decluttering. See MainViewModel.HideAllTaxiwayPoints. -->
+                                <CheckBox Content="Hide All from Diagram" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          IsChecked="{Binding DataContext.HideAllTaxiwayPoints, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <!-- Bound to VisibleTaxiwayPointEdits, not TaxiwayPointEdits — a diagram
+                                 click on one or more red dots (Ctrl+click to extend the selection,
+                                 same as a taxiway path) filters this down to just the clicked
+                                 point(s); with nothing selected it shows every point (see
+                                 MainViewModel.RefreshTaxiwayPointFilter). One row per distinct sim
+                                 TAXI_POINT index resolved from Airport.TaxiPaths (see
+                                 TaxiwayPointEditViewModel.BuildAll). Index/X/Z are read-only (derived
+                                 from the underlying taxi path data, not independently editable);
+                                 Type/Orientation write through to every taxi path segment sharing that
+                                 point. -->
+                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      ItemsSource="{Binding DataContext.VisibleTaxiwayPointEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Index" Width="50" IsReadOnly="True" Binding="{Binding Index}"/>
+                                    <DataGridTextColumn Header="X (m)" Width="70" IsReadOnly="True" Binding="{Binding XMeters}"/>
+                                    <DataGridTextColumn Header="Z (m)" Width="70" IsReadOnly="True" Binding="{Binding ZMeters}"/>
+                                    <DataGridTemplateColumn Header="Type" Width="130">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPointTypes}"
+                                                          SelectedItem="{Binding Type, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Orientation" Width="100">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiPointOrientations}"
+                                                          SelectedItem="{Binding Orientation, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
@@ -368,7 +554,8 @@
                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayClearSelectionCommand="{Binding DataContext.ClearTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                            TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwayPointClickCommand="{Binding DataContext.ToggleTaxiwayPointSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
                         <!-- Batch-edit popover for the diagram's multi-select — DataContext is
                              bound directly on the Popup element itself (not inside its Child),

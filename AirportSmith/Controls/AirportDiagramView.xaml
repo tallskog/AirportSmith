@@ -104,6 +104,56 @@
                 </TransformGroup>
             </Canvas.RenderTransform>
 
+            <ItemsControl ItemsSource="{Binding Runways}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- IsVisible backs the Edit tab's per-row "hide from diagram" toggle — see
+                             the equivalent comment on the taxiway template below. -->
+                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
+                            <!-- Blast pad / overrun: extra pavement extending outward beyond each
+                                 threshold. Drawn first (bottom layer) — a null feature (ContentControl
+                                 Content unset) simply renders nothing. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding PrimaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
+
+                            <!-- Approach lights extend outward beyond the extensions above, so they
+                                 stay furthest from the runway itself and never get drawn over by them. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
+
+                            <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="DarkSlateGray"/>
+
+                            <!-- Displaced threshold: a marking WITHIN the runway's own pavement,
+                                 drawn after (on top of) the runway polygon above. -->
+                            <ContentControl Content="{Binding PrimaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
+                            <ContentControl Content="{Binding SecondaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
+
+                            <TextBlock Text="{Binding PrimaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
+                                       Canvas.Left="{Binding PrimaryLabelPosition.X}" Canvas.Top="{Binding PrimaryLabelPosition.Y}"
+                                       Margin="-12,-8,0,0"/>
+                            <TextBlock Text="{Binding SecondaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
+                                       Canvas.Left="{Binding SecondaryLabelPosition.X}" Canvas.Top="{Binding SecondaryLabelPosition.Y}"
+                                       Margin="-12,-8,0,0"/>
+                        </Canvas>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Drawn AFTER Runways (unlike before IsRunwayType existed, when draw order
+                 relative to Runways never mattered since ordinary taxiways don't overlap
+                 runway pavement) — confirmed the hard way that a Runway-type segment's red
+                 line rendered completely correctly (right position, right color, per a
+                 dedicated on-canvas debug marker placed at its exact Start/End) yet stayed
+                 totally invisible: it was being drawn UNDER the Runways ItemsControl's own
+                 DarkSlateGray pavement Polygon, which paints over anything beneath it
+                 wherever a Runway-type path (by definition) runs along/across the runway
+                 itself. Moving the whole ItemsControl after Runways fixes this for every
+                 segment, not just the ones that happen to overlap a runway. -->
             <ItemsControl ItemsSource="{Binding TaxiwaySegments}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
@@ -139,15 +189,41 @@
                                     </Style>
                                 </Polygon.Style>
                             </Polygon>
-                            <Line X1="{Binding Start.X}" Y1="{Binding Start.Y}" X2="{Binding End.X}" Y2="{Binding End.Y}" StrokeThickness="1.5">
+                            <!-- IsRunwayType (a TaxiPathType.Runway segment — the taxi path onto/off a
+                                 runway, e.g. an entrance/exit stub) always wins over the ordinary
+                                 named/unnamed styling below, regardless of HasName, so it reads
+                                 unmistakably as "this connects to a runway, not an ordinary taxiway" —
+                                 the whole point of drawing these lines at all is to stop a point only
+                                 reachable through one from looking like an orphaned dot next to its own
+                                 TaxiwayPoints marker (see TaxiwaySegmentShape.IsRunwayType's own doc
+                                 comment for the real OIBK anomaly this fixes). -->
+                            <!-- StrokeThickness is set entirely via the Style below (not as a local
+                                 attribute here) — a local value on the element itself would take
+                                 precedence over every Style.Triggers Setter for the same property
+                                 regardless of which trigger is active, silently defeating
+                                 IsRunwayType's own thicker override below. -->
+                            <Line X1="{Binding Start.X}" Y1="{Binding Start.Y}" X2="{Binding End.X}" Y2="{Binding End.Y}">
                                 <Line.Style>
                                     <Style TargetType="Line">
                                         <Setter Property="Stroke" Value="Gray"/>
                                         <Setter Property="StrokeDashArray" Value="4,2"/>
+                                        <Setter Property="StrokeThickness" Value="1.5"/>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding HasName}" Value="True">
                                                 <Setter Property="Stroke" Value="Blue"/>
                                                 <Setter Property="StrokeDashArray" Value="{x:Null}"/>
+                                            </DataTrigger>
+                                            <!-- Thicker than every other line style in this view (the
+                                                 approach-lights rail's own connecting Polyline is 4) so a
+                                                 Runway-type segment stays visible even across the long spans
+                                                 some of OIBK's real data has (995m in one case) at a large
+                                                 airport's fit-to-view zoom — same "shrinks below a device
+                                                 pixel" concern already documented for the approach lights
+                                                 rail and the taxiway point markers. -->
+                                            <DataTrigger Binding="{Binding IsRunwayType}" Value="True">
+                                                <Setter Property="Stroke" Value="Red"/>
+                                                <Setter Property="StrokeDashArray" Value="{x:Null}"/>
+                                                <Setter Property="StrokeThickness" Value="5"/>
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -157,46 +233,6 @@
                                        Visibility="{Binding HasName, Converter={StaticResource BoolToVisibility}}"
                                        Canvas.Left="{Binding MidPoint.X}" Canvas.Top="{Binding MidPoint.Y}"
                                        Margin="-10,-16,0,0"/>
-                        </Canvas>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <ItemsControl ItemsSource="{Binding Runways}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <!-- IsVisible backs the Edit tab's per-row "hide from diagram" toggle — see
-                             the equivalent comment on the taxiway template above. -->
-                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
-                            <!-- Blast pad / overrun: extra pavement extending outward beyond each
-                                 threshold. Drawn first (bottom layer) — a null feature (ContentControl
-                                 Content unset) simply renders nothing. -->
-                            <ContentControl Content="{Binding PrimaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
-                            <ContentControl Content="{Binding PrimaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
-                            <ContentControl Content="{Binding SecondaryFeatures.BlastPad}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
-                            <ContentControl Content="{Binding SecondaryFeatures.Overrun}" ContentTemplate="{StaticResource RunwayExtensionTemplate}"/>
-
-                            <!-- Approach lights extend outward beyond the extensions above, so they
-                                 stay furthest from the runway itself and never get drawn over by them. -->
-                            <ContentControl Content="{Binding PrimaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
-                            <ContentControl Content="{Binding SecondaryFeatures.ApproachLights}" ContentTemplate="{StaticResource ApproachLightsTemplate}"/>
-
-                            <Polygon Points="{Binding Corners, Converter={StaticResource Point2DListToPointCollection}}" Fill="DarkSlateGray"/>
-
-                            <!-- Displaced threshold: a marking WITHIN the runway's own pavement,
-                                 drawn after (on top of) the runway polygon above. -->
-                            <ContentControl Content="{Binding PrimaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
-                            <ContentControl Content="{Binding SecondaryFeatures.ThresholdMarking}" ContentTemplate="{StaticResource RunwayThresholdMarkingTemplate}"/>
-
-                            <TextBlock Text="{Binding PrimaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
-                                       Canvas.Left="{Binding PrimaryLabelPosition.X}" Canvas.Top="{Binding PrimaryLabelPosition.Y}"
-                                       Margin="-12,-8,0,0"/>
-                            <TextBlock Text="{Binding SecondaryDesignation}" FontSize="11" FontWeight="Bold" Foreground="White"
-                                       Canvas.Left="{Binding SecondaryLabelPosition.X}" Canvas.Top="{Binding SecondaryLabelPosition.Y}"
-                                       Margin="-12,-8,0,0"/>
                         </Canvas>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -214,6 +250,60 @@
                                     <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}" RadiusX="{Binding RadiusMeters}" RadiusY="{Binding RadiusMeters}"/>
                                     <LineGeometry StartPoint="{Binding Center, Converter={StaticResource Point2DToPoint}}" EndPoint="{Binding HeadingTip, Converter={StaticResource Point2DToPoint}}"/>
                                 </GeometryGroup>
+                            </Path.Data>
+                        </Path>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Each distinct sim TAXI_POINT index resolved from the airport's taxi
+                 paths (see AirportDiagramProjector.Project's TaxiwayPoints), drawn last
+                 so they stay visible on top of every other shape. Uses a Path +
+                 EllipseGeometry with an absolute Center (same mechanism as ParkingSpots
+                 just above), not Canvas.Left/Top on the template root like every other
+                 marker in this view — that Canvas.Left/Top-on-template-root approach
+                 (which works fine for every OTHER templated item in this file) was tried
+                 first here and confirmed broken specifically for this ItemsControl
+                 against a real loaded airport: every one of the 381 generated items
+                 rendered stacked at the same (0,0)-ish spot instead of its own Center,
+                 root cause not identified. EllipseGeometry.Center draws in the geometry's
+                 own absolute coordinate space regardless of the hosting Path's own
+                 Canvas position, sidestepping whatever that Canvas.Left issue was —
+                 confirmed fixed against the same real airport.
+
+                 IsVisible backs both the per-shape state driven by "Hide All Taxiway
+                 Points from Diagram" (MainViewModel.HideAllTaxiwayPoints — a single
+                 all-or-nothing toggle, unlike TaxiwaySegments/Runways' per-row
+                 checkboxes, since individual points don't have their own Edit tab
+                 checkbox) and the read-only Diagram tab, which never sets it, so points
+                 stay visible there. IsSelected is the Edit tab's click-to-select
+                 highlight — Ctrl+click extends the selection, same as a taxiway path
+                 (see TaxiwayPointShape_MouseLeftButtonDown/
+                 MainViewModel.ToggleTaxiwayPointSelection) — filtering the Taxiway
+                 Points grid down to just the selected point(s). -->
+            <ItemsControl ItemsSource="{Binding TaxiwayPoints}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Path Stroke="Black" StrokeThickness="1"
+                              Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}"
+                              MouseLeftButtonDown="TaxiwayPointShape_MouseLeftButtonDown">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Fill" Value="Red"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                            <Setter Property="Fill" Value="Orange"/>
+                                            <Setter Property="Stroke" Value="DarkOrange"/>
+                                            <Setter Property="StrokeThickness" Value="2"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                            <Path.Data>
+                                <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}" RadiusX="9" RadiusY="9"/>
                             </Path.Data>
                         </Path>
                     </DataTemplate>

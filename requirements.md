@@ -796,6 +796,53 @@ be) covered by an automated test — it's WPF's own internal `DataGrid`
 event-timing behavior, not application logic; verified manually, same as
 the rest of this tab's mouse interaction.
 
+**Bug fix (2026-09-17), reported as "crash to desktop" while adding a taxi
+name:** clicking **Add Name** then clicking the new blank row to start
+typing its name crashed the app. Root-caused via a real repro plus the
+Windows Application/`.NET Runtime` event log entries it left behind
+(`System.InvalidOperationException: 'DeferRefresh' is not allowed during an
+AddNew or Edit Item transaction`, thrown from
+`ItemsControl.OnItemsSourceChanged` while a `BindingExpression` was
+reattaching): both the Taxi Names grid itself and every Taxi Paths row's
+Name-column `ComboBox` (one per row — hundreds for a real airport) bound
+`ItemsSource` directly to the same `TaxiNames` `ObservableCollection`
+instance. WPF's `CollectionViewSource` caches one shared default
+`ICollectionView` per source collection instance, so all of those controls
+shared the Taxi Names grid's own view — and the grid puts that view into an
+"edit item" transaction the moment a row starts editing. If WPF
+independently re-attached even one Name `ComboBox`'s binding to that same
+shared view during that window (ordinary row-container virtualization as
+the Taxi Paths grid scrolls, or `VisibleTaxiPathEdits` being reassigned by
+`RefreshTaxiwayFilter` — both unrelated to Taxi Names on their face), the
+conflicting `DeferRefresh()` call crashed the process. The new per-column
+Taxi Paths filtering feature made `RefreshTaxiwayFilter` fire far more
+often, which is almost certainly why this pre-existing landmine became easy
+to hit only now. **Fix:** `MainViewModel.TaxiNamesPicker` is a
+`ReadOnlyObservableCollection<TaxiNameEditViewModel>` wrapping the same
+`TaxiNames` list — a genuinely separate collection instance, so it gets its
+own independent default view, while still mirroring every add/rename/delete
+live (`CollectionChanged` forwards through the wrapper; each item's own
+`INotifyPropertyChanged` is unaffected either way). Every Name picker
+*except* the Taxi Names grid itself now binds to `TaxiNamesPicker` instead
+of `TaxiNames` directly. Regression-tested
+(`TaxiNamesPicker_IsASeparateInstanceFromTaxiNames_ButMirrorsItsContentsLive`)
+and confirmed against a real repro (the exact crash sequence — Add Name,
+click the new row repeatedly, type — no longer terminates the process).
+
+**UX fix, same report:** the Taxi Names grid's Name column previously needed
+three clicks after Add Name before typing actually worked — a
+`DataGridTemplateColumn`'s `CellEditingTemplate` only activates once a cell
+is already "current," the same well-known WPF quirk this file's checkbox
+columns already work around (see their own comment) by using a real,
+always-interactive control directly in `CellTemplate` instead of a
+template-switching pair. Fixed the same way: a single always-editable
+`TextBox` (no separate `CellEditingTemplate`) — a single click now positions
+the caret and typing works immediately. The blank-entry "(no name)" warning
+(added after a previous incident — see below) is preserved as a watermark
+`TextBlock` behind the (transparent-background) `TextBox`, shown only while
+`IsUnnamed` and marked `IsHitTestVisible="False"` so a click on the
+watermark itself still reaches the `TextBox` underneath.
+
 **Known limitations:**
 - While a diagram-driven batch-edit session is open (the popover is
   showing), the Taxi Paths grid's own row selection can't drive the diagram
@@ -866,6 +913,95 @@ the rest of this tab's mouse interaction.
   unchecking it restores visibility. This is a display-only convenience for
   decluttering a busy airport — it is not saved by Save Project and does not
   affect `TaxiPathSegment`/`Runway`.
+- The Taxi Paths grid also shows read-only **Start**/**End** columns —
+  `TaxiPathEditViewModel.StartIndex`/`EndIndex`, the sim's own `TAXI_POINT`
+  indices this path connects, matching the Taxiway Points grid's own rows and
+  the exported `<TaxiwayPath start="..."/end="...">` — so a path can be
+  cross-referenced against the specific points it connects without switching
+  tabs or guessing from the diagram.
+- Every column in the Taxi Paths grid has its own filter, entered directly in
+  that column's header (a text box under the label for free-text/numeric
+  columns — Name, Start, End, Rwy # — matched as a case-insensitive substring
+  against the field's displayed text; a dropdown for enum/bool columns —
+  Type, Rwy Designator, Left/Right Edge, Left/Right Edge Lighted, Center
+  Line, Center Line Lighted, Hide from Diagram — with a leading "(any)"
+  meaning no filter on that column). All active filters combine with (AND);
+  a **Clear Filters** button next to the grid's header resets every one at
+  once and is only enabled while at least one is set
+  (`MainViewModel.TaxiPathFilter`/`ClearTaxiPathFilterCommand`). Filtering
+  combines with (AND), rather than replaces, the diagram's existing
+  click-to-select filter — selecting taxiways on the diagram narrows the
+  candidate rows first, then each column filter narrows that further
+  (`MatchesTaxiPathFilter`/`RefreshTaxiwayFilter`). A filter re-applies live
+  as a row's own field is edited (e.g. changing a path's Type away from an
+  active Type filter's value drops it out of the grid immediately) and every
+  filter resets to cleared when a new airport is loaded.
+  - **Known WPF quirk hit building this (2026-09-17):** binding a header's
+    filter control the same way every other cross-tab binding in this
+    codebase does (`RelativeSource AncestorType=Window` +
+    `DataContext.PropertyName`) silently failed to push edits back to the
+    source — the header `TextBox` itself displayed typed text fine (so the
+    control and its local value were working), but the bound
+    `TaxiPathFilter` property it was supposed to update never actually
+    changed, confirmed directly with a temporary on-screen debug binding.
+    Routing through the `DataGrid`'s own `Tag` (`RelativeSource
+    AncestorType=DataGrid`) — the usual documented workaround for this exact
+    "controls inside a `DataGridColumn.Header` can't reach page-level data"
+    class of problem — didn't fix it either. `DataGridColumn.Header` content
+    apparently doesn't reliably participate in the normal visual-tree
+    `RelativeSource` walk the way an ordinary sibling control does (e.g. the
+    Taxiway Points grid's "Hide All from Diagram" checkbox, confirmed
+    working). What did work: each filter header's own root `StackPanel` sets
+    its `DataContext` explicitly, once, in a `Loaded` handler
+    (`MainWindow.xaml.cs`'s `TaxiPathFilterHeader_Loaded`), so its filter
+    controls can then use a plain one-level `{Binding PropertyName}` — same
+    as a normal `DataGrid` cell template binds directly to its row item.
+    Root cause not otherwise identified; noted here so a future header-hosted
+    control in this app doesn't rediscover the same dead end.
+- The Edit tab also shows a **Taxiway Points** grid: one row per distinct sim
+  `TAXI_POINT` index resolved from the loaded airport's taxi paths (every
+  path's Start, plus its End unless the path is `Type==Parking`, whose End
+  references a `TaxiwayParking` item instead — same distinct-index synthesis
+  `AirportXmlExporter.BuildTaxiwayPoints` already used at export time, see
+  `TaxiwayPointEditViewModel.BuildAll`), with read-only Index/X/Z columns and
+  editable Type/Orientation pickers that write through to every taxi path
+  segment sharing that point (keeping them consistent, unlike the raw
+  per-segment fields which could otherwise disagree). The same points are
+  drawn as small red dots on both diagrams (`AirportDiagramProjector`'s
+  `TaxiwayPoints`, rendered by `AirportDiagramView`'s dedicated
+  `ItemsControl`, positioned via a `Path`+`EllipseGeometry` with an absolute
+  `Center` rather than `Canvas.Left`/`Top` on the template root like every
+  other marker in this view — that more usual approach was tried first and
+  confirmed broken specifically for this `ItemsControl` against a real
+  airport, with every generated point stacking at the same spot instead of
+  its own position; root cause not identified, worked around by switching to
+  the `EllipseGeometry` mechanism `ParkingSpots` already used successfully)
+  — deliberately not filtered to Taxi/Path-typed paths like `TaxiwaySegments`
+  is, so a `Runway`-type path's points are visible too (see this epic's
+  earlier note on `Runway`-typed rows having no other way to be visually
+  sanity-checked on the diagram).
+  - A single **Hide All from Diagram** checkbox next to the grid header (not
+    a per-row checkbox like taxiways/runways — there can be hundreds of
+    points, so per-row would be impractical) toggles every point's
+    visibility at once (`MainViewModel.HideAllTaxiwayPoints`); hiding also
+    clears any current point selection. Display-only, like every other
+    hide-from-diagram toggle — never persisted, never touches
+    `TaxiPathSegment`. Resets to unchecked (and every point back to visible)
+    whenever a new airport is loaded.
+  - Clicking one or more red dots on either diagram (Ctrl+click to extend
+    the selection, same interaction as a taxiway path — see
+    `TaxiwayPointShape_MouseLeftButtonDown`/
+    `MainViewModel.ToggleTaxiwayPointSelection`) filters the Taxiway Points
+    grid down to just the selected point(s)
+    (`MainViewModel.VisibleTaxiwayPointEdits`/`RefreshTaxiwayPointFilter`,
+    matched to grid rows by the shared sim `TAXI_POINT` index rather than
+    list position, since `TaxiwayPointEdits` isn't a 1:1 same-order wrapper
+    over a raw `AirportDetails` list the way `TaxiPathEdits` is). This is an
+    independent selection from the taxiway-path one (selecting a point
+    doesn't affect path selection or vice versa) with no batch-edit popover
+    of its own; a plain click on empty diagram space clears both selections
+    at once (`ClearTaxiwaySelectionCommand`, shared with the taxiway-path
+    clear).
 - Given edits have been made, clicking **Save Project** writes an
   `AirportProjectFile` (schema v2: `SchemaVersion`, `SavedAtUtc`, `Airport`)
   to `AppDataHelper.AppDataPath\Projects\{ICAO}.json` via
@@ -1150,6 +1286,11 @@ parking space" explicitly, not a third runway-related interpretation, but
 that doc sentence may simply be incomplete (the way the SDK's own
 `RUNWAY.SURFACE` doc is separately known to be incomplete already).
 
+**RESOLVED (2026-09-17)** — see the "Follow-up" entry near the end of this
+epic: `Runway`-typed paths are now drawn on the diagram (as thick red
+lines), which is what let the length anomalies noted above actually be
+seen directly instead of staying a theory.
+
 **RESOLVED (2026-09-16), root cause found and fixed:** step 1 above (diff
 against the Editor's own real output) was carried out — the user imported
 AirportSmith's XML into a scratch project, manually added a handful of
@@ -1252,6 +1393,75 @@ are left off entirely (that association currently has no valid place in the
 XML format for a non-RUNWAY path). Regression-tested
 (`Build_TaxiTypePathWithRunwayAssociation_OmitsNumberAndDesignatorAndWarns`,
 `Build_RunwayTypePathWithRunwayAssociation_IncludesNumberAndDesignator`).
+
+**Follow-up (2026-09-17), the "RUNWAY-type path" loose end above picked back
+up — reported against OIBK:** the user noticed taxi points 0 and 12 render
+as apparently-disconnected red dots in the Edit/Diagram tabs even though the
+Taxi Paths grid clearly shows a row connecting each of them (`start="79"
+end="0"`, `start="13" end="12"`, both `type="RUNWAY"`), and separately that
+the Scenery Editor flags a "point not linked anywhere" error on import.
+Investigated directly against the real OIBK debug JSON and exported XML:
+
+- **Diagram symptom, root-caused and fixed:** `AirportDiagramProjector`
+  only ever drew `Taxi`/`Path`-typed segments as lines (`TaxiwaySegments`) —
+  `Runway`-typed ones were filtered out entirely, even though
+  `TaxiwayPoints` (the red dots) were never filtered by type. A point only
+  reachable via a `Runway`-type path therefore always looked orphaned,
+  regardless of whether the underlying data was fine. Fixed in two parts:
+  1. `AirportDiagramProjector` now includes `Runway`-typed segments in
+     `TaxiwaySegments` (`TaxiwaySegmentShape.IsRunwayType`), rendered as a
+     thick red line in `AirportDiagramView` (a `DataTrigger`, same mechanism
+     as the existing named/unnamed blue/gray styling) — `Parking` stays
+     excluded, since its End references a `TaxiwayParking` item, not a taxi
+     point (see `BuildTaxiwayPoints`'s own comment).
+  2. **A second, non-obvious bug found while verifying the first fix
+     visually:** the new red lines were computing correct positions (checked
+     directly with a temporary on-canvas debug marker at the exact
+     coordinates) but stayed completely invisible — because `Runway`-type
+     paths run along/across the runway pavement itself by definition, and
+     `AirportDiagramView`'s `Runways` `ItemsControl` (the `DarkSlateGray`
+     pavement polygon) was drawn *after* `TaxiwaySegments` in the visual
+     tree, painting over them. Fixed by moving the whole `TaxiwaySegments`
+     `ItemsControl` to after `Runways` in the XAML. Also had to move
+     `StrokeThickness` out of a local XAML attribute on the `Line` element
+     into the `Style`'s own `Setter` — a local value takes precedence over
+     every `Style.Triggers` `Setter` for the same property regardless of
+     which trigger is active, which was silently keeping every segment
+     (including the new red ones) at the same thin `1.5` regardless of the
+     `IsRunwayType` trigger's own (higher) value.
+  3. This also surfaced the real extent of the previously-flagged length
+     anomalies: several `RUNWAY`-type paths are genuinely very long (995m,
+     838.5m, 542m, and others in the 300-500m range) — now directly visible
+     and inspectable as prominent red lines on the diagram instead of a
+     theory that needed guessing at. Not yet judged whether these lengths
+     are real airport geometry or a further data-quality issue; visible for
+     the first time is the point of this fix, not a claim that they're wrong.
+- **Export symptom, root-caused and fixed:** confirmed directly against the
+  real exported OIBK XML that `AirportXmlExporter.BuildTaxiwayPath` was
+  emitting a `name` attribute on `RUNWAY`-type `<TaxiwayPath>` elements
+  (SimConnect's `TAXI_NAME` association isn't itself gated by path type, so
+  a `RUNWAY`-type path can and did resolve one) — the same class of "valid
+  only for one path type" mistake as the `number`/`designator` fix above,
+  just the opposite direction: `name` is documented as valid only when type
+  is *not* `"RUNWAY"`. Suspected (not independently confirmed against a live
+  Scenery Editor import at time of writing) to be the actual cause of the
+  "point not linked anywhere" error: an invalid attribute rejecting the
+  whole `<TaxiwayPath>` element would silently orphan any `<TaxiwayPoint>`
+  only reachable through it — which matches points 0/12 exactly, since both
+  are only linked via a `RUNWAY`-type path once you exclude the coincidental
+  `PARKING`-type path that numerically collides with the same index (see
+  `BuildTaxiwayPoints`'s established "Parking path End isn't a taxi point"
+  rule — that part of the export was already correct). Fixed:
+  `BuildTaxiwayPath` now omits `name` when the mapped XML type is
+  `"RUNWAY"`, with a warning when a resolvable name would otherwise have
+  been dropped. Regression-tested
+  (`Build_RunwayTypePathWithResolvableName_OmitsNameAndWarns`,
+  `Build_NonRunwayTypePathWithResolvableName_IncludesName`).
+- **Next step for the user:** re-export OIBK and re-import into the Scenery
+  Editor to confirm whether the `name`-attribute fix actually clears the
+  "not linked" error for points 0/12 — this wasn't independently verified
+  against a live Editor import (this project's tooling can inspect the
+  generated XML directly but can't run the Editor itself).
 
 ## Proposed v0.1+ epics (not yet committed — for prioritization with the user)
 

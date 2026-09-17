@@ -45,6 +45,24 @@ public partial class MainWindow : Window
     private DateTime _lastTaxiPathsItemsSourceChangedAt;
     private static readonly TimeSpan TaxiPathsItemsSourceSettleWindow = TimeSpan.FromMilliseconds(300);
 
+    // DataGridColumn.Header content doesn't reliably participate in the
+    // normal visual-tree RelativeSource walk the way a plain sibling control
+    // does — confirmed directly: neither RelativeSource AncestorType=Window
+    // nor routing through the DataGrid's own Tag (RelativeSource
+    // AncestorType=DataGrid) let a header-hosted TwoWay-bound TextBox push
+    // its edits back to TaxiPathFilter, even though the exact same binding
+    // pattern on an ordinary (non-header) control elsewhere in this window
+    // works fine. Explicitly setting each filter header's own DataContext
+    // here — once, when it loads — sidesteps whatever that RelativeSource
+    // limitation is; every filter control in a header can then use a plain
+    // one-level {Binding PropertyName}, same as a DataGrid cell template
+    // binds directly to its row item.
+    private void TaxiPathFilterHeader_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement element)
+            element.DataContext = _viewModel.TaxiPathFilter;
+    }
+
     private void TaxiPathsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (sender is not DataGrid grid) return;

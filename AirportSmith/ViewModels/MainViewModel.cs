@@ -24,6 +24,7 @@ public class MainViewModel : ViewModelBase
     private IReadOnlyList<DataNode> _airportDataTree = [];
     private IReadOnlyList<TaxiPathEditViewModel> _taxiPathEdits = [];
     private IReadOnlyList<RunwayEditViewModel> _runwayEdits = [];
+    private IReadOnlyList<TaxiwayPointEditViewModel> _taxiwayPointEdits = [];
     private string? _lastExportPath;
     private string? _lastProjectSavePath;
     private string? _lastXmlExportPath;
@@ -114,15 +115,101 @@ public class MainViewModel : ViewModelBase
         private set => SetField(ref _runwayEdits, value);
     }
 
-    // The shared, user-managed taxi name list backing every TaxiPathEditViewModel
-    // .TaxiNameId picker. A single long-lived collection (cleared/repopulated on
-    // each load, not replaced) so the Edit tab's ComboBoxes don't need to
-    // rebind their ItemsSource on every airport load.
+    // Read/edit view over every distinct sim TAXI_POINT index resolved from
+    // Airport.TaxiPaths — see TaxiwayPointEditViewModel.BuildAll. The
+    // diagram's own TaxiwayPoints are computed independently by
+    // AirportDiagramProjector straight from Airport (matched back to these
+    // rows by Index, not list position — see TaxiwayPointShape's own doc
+    // comment), so nothing here needs to push updates onto diagram shapes;
+    // it's the other direction (a diagram click/hide-all toggle) that drives
+    // VisibleTaxiwayPointEdits below.
+    public IReadOnlyList<TaxiwayPointEditViewModel> TaxiwayPointEdits
+    {
+        get => _taxiwayPointEdits;
+        private set => SetField(ref _taxiwayPointEdits, value);
+    }
+
+    // What the Taxiway Points grid actually displays — all of
+    // TaxiwayPointEdits when nothing is selected on the Edit tab's diagram,
+    // or just the row(s) matching the current point selection otherwise
+    // (see RefreshTaxiwayPointFilter) — same "click a shape, see just that
+    // shape's data" pattern as VisibleTaxiPathEdits, but as an independent
+    // selection (selecting a taxiway path doesn't affect this, and vice
+    // versa).
+    private IReadOnlyList<TaxiwayPointEditViewModel> _visibleTaxiwayPointEdits = [];
+    public IReadOnlyList<TaxiwayPointEditViewModel> VisibleTaxiwayPointEdits
+    {
+        get => _visibleTaxiwayPointEdits;
+        private set => SetField(ref _visibleTaxiwayPointEdits, value);
+    }
+
+    // A single all-or-nothing toggle for the Taxiway Points grid's "Hide All
+    // from Diagram" checkbox — unlike TaxiPathEdits/RunwayEdits, individual
+    // points have no per-row Edit tab checkbox of their own to hide just one,
+    // since there can be hundreds of them (per-row would be impractical to
+    // use for decluttering). A display-only workspace convenience like every
+    // other IsHiddenFromDiagram/IsVisible toggle in this class — never
+    // persisted, never touches Airport. Hiding also clears any current point
+    // selection (a hidden point has nothing to highlight), same reasoning as
+    // RefreshAllTaxiwayVisibility.
+    private bool _hideAllTaxiwayPoints;
+    public bool HideAllTaxiwayPoints
+    {
+        get => _hideAllTaxiwayPoints;
+        set
+        {
+            if (!SetField(ref _hideAllTaxiwayPoints, value)) return;
+            if (Diagram is null) return;
+
+            foreach (var shape in Diagram.TaxiwayPoints)
+            {
+                shape.IsVisible = !value;
+                if (value) shape.IsSelected = false;
+            }
+            RefreshTaxiwayPointFilter();
+        }
+    }
+
+    // The shared, user-managed taxi name list, directly editable via the Edit
+    // tab's own Taxi Names grid (add/rename/delete) — a single long-lived
+    // collection (cleared/repopulated on each load, not replaced) so that
+    // grid doesn't need to rebind its ItemsSource on every airport load.
     public ObservableCollection<TaxiNameEditViewModel> TaxiNames { get; } = [];
+
+    // A SEPARATE view over the exact same items, for every OTHER "Name"
+    // picker (the Taxi Paths grid's Name column ComboBox, one per row — up
+    // to hundreds for a real airport) to bind against instead of TaxiNames
+    // directly. Necessary, not cosmetic: WPF's CollectionViewSource caches
+    // one shared default ICollectionView per SOURCE COLLECTION INSTANCE, so
+    // if every one of those ComboBoxes bound to TaxiNames directly, they'd
+    // all share the Taxi Names grid's own default view — and the DataGrid
+    // puts that view into an "edit item" transaction while a row is being
+    // edited there. If WPF then reattaches even one Name-column ComboBox's
+    // ItemsSource binding to that same shared view during that window (e.g.
+    // ordinary row-container virtualization as the grid scrolls, or
+    // VisibleTaxiPathEdits being reassigned by RefreshTaxiwayFilter — both
+    // completely unrelated to Taxi Names), WPF throws
+    // InvalidOperationException ("'DeferRefresh' is not allowed during an
+    // AddNew or Edit Item transaction") and the app crashes. Confirmed via a
+    // real repro and a .NET Runtime crash log entry: clicking "Add Name" and
+    // then clicking the new row to start editing it. A
+    // ReadOnlyObservableCollection wrapping the same underlying TaxiNames
+    // list is a genuinely separate collection instance, so it gets its own
+    // independent default view — while still forwarding every
+    // add/remove/CollectionChanged live, so renaming, adding, or deleting a
+    // name here is still reflected immediately in every picker.
+    public ReadOnlyObservableCollection<TaxiNameEditViewModel> TaxiNamesPicker { get; }
 
     // Staging values for the "batch edit selected taxi paths" popover — see
     // TaxiwayBatchEditViewModel.
     public TaxiwayBatchEditViewModel TaxiwayBatchEdit { get; } = new();
+
+    // Per-column filter criteria for the Taxi Paths grid, entered directly
+    // in each column's header — see TaxiPathFilterViewModel. Subscribed once
+    // in the constructor (not per-load, like TaxiwayBatchEdit above) since
+    // it's a single long-lived object; RefreshTaxiwayFilter re-runs on every
+    // change so the grid updates as the user types/picks a filter value.
+    public TaxiPathFilterViewModel TaxiPathFilter { get; } = new();
 
     public string? LastProjectSavePath
     {
@@ -196,10 +283,12 @@ public class MainViewModel : ViewModelBase
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
     public RelayCommand<TaxiwaySelectionRequest> ToggleTaxiwaySelectionCommand { get; }
+    public RelayCommand<TaxiwayPointSelectionRequest> ToggleTaxiwayPointSelectionCommand { get; }
     public RelayCommand ClearTaxiwaySelectionCommand { get; }
     public RelayCommand OpenTaxiwayBatchEditCommand { get; }
     public RelayCommand ApplyTaxiwayBatchEditCommand { get; }
     public RelayCommand CloseTaxiwayBatchEditCommand { get; }
+    public RelayCommand ClearTaxiPathFilterCommand { get; }
 
     public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null)
     {
@@ -208,6 +297,7 @@ public class MainViewModel : ViewModelBase
         _fileDialogService = fileDialogService;
         _projectStore = projectStore;
         _xmlExporter = xmlExporter;
+        TaxiNamesPicker = new ReadOnlyObservableCollection<TaxiNameEditViewModel>(TaxiNames);
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => IsValidIcao(IcaoInput));
         ExportDebugDataCommand = new RelayCommand(ExportDebugData, () => _debugDataStore != null && Airport != null);
@@ -218,10 +308,21 @@ public class MainViewModel : ViewModelBase
         AddTaxiNameCommand = new RelayCommand(AddTaxiName, () => Airport != null);
         DeleteTaxiNameCommand = new RelayCommand<TaxiNameEditViewModel>(DeleteTaxiName, name => name != null);
         ToggleTaxiwaySelectionCommand = new RelayCommand<TaxiwaySelectionRequest>(ToggleTaxiwaySelection, request => request != null);
+        ToggleTaxiwayPointSelectionCommand = new RelayCommand<TaxiwayPointSelectionRequest>(ToggleTaxiwayPointSelection, request => request != null);
         ClearTaxiwaySelectionCommand = new RelayCommand(ClearTaxiwaySelection, () => Diagram != null);
         OpenTaxiwayBatchEditCommand = new RelayCommand(OpenTaxiwayBatchEdit, () => HasTaxiwaySelection);
         ApplyTaxiwayBatchEditCommand = new RelayCommand(ApplyTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
         CloseTaxiwayBatchEditCommand = new RelayCommand(CloseTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
+        ClearTaxiPathFilterCommand = new RelayCommand(TaxiPathFilter.Reset, () => TaxiPathFilter.HasAnyFilter);
+        // A single long-lived object (unlike TaxiwayBatchEdit, which is
+        // reset per selection, not per subscription) — subscribed once here
+        // rather than per-SetAirport, so a filter typed before an airport is
+        // even loaded still applies once one is.
+        TaxiPathFilter.PropertyChanged += (_, _) =>
+        {
+            RefreshTaxiwayFilter();
+            ClearTaxiPathFilterCommand.RaiseCanExecuteChanged();
+        };
     }
 
     private static bool IsValidIcao(string icao) => icao.Length is >= 3 and <= 4;
@@ -241,6 +342,17 @@ public class MainViewModel : ViewModelBase
         AirportDataTree = airport != null ? AirportDataTreeBuilder.Build(airport) : [];
         TaxiPathEdits = airport != null ? airport.TaxiPaths.Select(t => new TaxiPathEditViewModel(t)).ToList() : [];
         RunwayEdits = airport != null ? airport.Runways.Select(r => new RunwayEditViewModel(r)).ToList() : [];
+        TaxiwayPointEdits = airport != null ? TaxiwayPointEditViewModel.BuildAll(airport) : [];
+
+        // Bypasses the HideAllTaxiwayPoints setter's apply-to-diagram side
+        // effect: a freshly projected Diagram's TaxiwayPoints already default
+        // to IsVisible=true, so there's nothing to "un-hide" here — this just
+        // resets the checkbox itself back to unchecked for the new airport.
+        if (_hideAllTaxiwayPoints)
+        {
+            _hideAllTaxiwayPoints = false;
+            OnPropertyChanged(nameof(HideAllTaxiwayPoints));
+        }
 
         TaxiNames.Clear();
         if (airport != null)
@@ -252,7 +364,13 @@ public class MainViewModel : ViewModelBase
         SubscribeTaxiNames();
         SubscribeRunwayEdits();
         RefreshTaxiwaySelectionState();
+        // A new airport starts with every Taxi Paths column filter cleared —
+        // a filter value typed against the previous airport (e.g. a taxi
+        // name that doesn't exist on this one) would otherwise silently
+        // leave the grid looking empty with no obvious reason why.
+        TaxiPathFilter.Reset();
         RefreshTaxiwayFilter();
+        RefreshTaxiwayPointFilter();
         SaveProjectCommand.RaiseCanExecuteChanged();
         ExportXmlCommand.RaiseCanExecuteChanged();
         AddTaxiNameCommand.RaiseCanExecuteChanged();
@@ -354,6 +472,14 @@ public class MainViewModel : ViewModelBase
                 RefreshAllTaxiwayVisibility();
                 break;
         }
+
+        // Any edited field could be the one an active Taxi Paths column
+        // filter is checking — e.g. changing a path's Type away from the
+        // value a Type filter is set to should drop it out of
+        // VisibleTaxiPathEdits immediately, same as typing that filter value
+        // in the first place would have. Unconditional (not just for the two
+        // cases above) since every grid column is filterable.
+        RefreshTaxiwayFilter();
     }
 
     // A TaxiName's Value can be shared by several taxi paths, so renaming one
@@ -361,8 +487,13 @@ public class MainViewModel : ViewModelBase
     // not just whichever path happened to trigger the change.
     private void OnTaxiNameEditChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(TaxiNameEditViewModel.Value))
-            RefreshAllTaxiwayLabels();
+        if (e.PropertyName != nameof(TaxiNameEditViewModel.Value)) return;
+
+        RefreshAllTaxiwayLabels();
+        // A Name filter matches the resolved display value, not TaxiNameId
+        // itself — renaming the entry a filtered-in path points at can change
+        // whether it still matches.
+        RefreshTaxiwayFilter();
     }
 
     private void RefreshAllTaxiwayLabels()
@@ -372,12 +503,18 @@ public class MainViewModel : ViewModelBase
         foreach (var shape in Diagram.TaxiwaySegments)
         {
             if (shape.SourceIndex >= TaxiPathEdits.Count) continue;
-            var nameId = TaxiPathEdits[shape.SourceIndex].TaxiNameId;
-            var name = nameId is { } id ? TaxiNames.FirstOrDefault(n => n.Id == id)?.Value ?? string.Empty : string.Empty;
+            var name = ResolveTaxiNameValue(TaxiPathEdits[shape.SourceIndex].TaxiNameId);
             shape.Name = name;
             shape.HasName = !string.IsNullOrWhiteSpace(name);
         }
     }
+
+    // Shared by RefreshAllTaxiwayLabels (diagram label text) and
+    // MatchesTaxiPathFilter (Name filter matching) — both need the same
+    // TaxiNameId -> display string resolution against the shared TaxiNames
+    // list.
+    private string ResolveTaxiNameValue(Guid? taxiNameId) =>
+        taxiNameId is { } id ? TaxiNames.FirstOrDefault(n => n.Id == id)?.Value ?? string.Empty : string.Empty;
 
     // Same idea as SubscribeTaxiPathEdits, for RunwayEditViewModel's own
     // hide-from-diagram toggle.
@@ -469,19 +606,48 @@ public class MainViewModel : ViewModelBase
         RefreshTaxiwayFilter();
     }
 
+    // Same click-to-select/Ctrl+click-to-extend pattern as
+    // ToggleTaxiwaySelection, for taxiway point markers — kept as an
+    // independent selection (its own HashSet-equivalent of IsSelected flags
+    // on Diagram.TaxiwayPoints, its own filtered grid) rather than sharing
+    // state with the taxi-path selection, since they're separate shapes in
+    // separate grids with no batch-edit popover of their own.
+    private void ToggleTaxiwayPointSelection(TaxiwayPointSelectionRequest? request)
+    {
+        if (request is null || Diagram is null) return;
+
+        if (!request.ExtendSelection)
+        {
+            foreach (var shape in Diagram.TaxiwayPoints)
+                if (!ReferenceEquals(shape, request.Shape))
+                    shape.IsSelected = false;
+            request.Shape.IsSelected = true;
+        }
+        else
+        {
+            request.Shape.IsSelected = !request.Shape.IsSelected;
+        }
+
+        RefreshTaxiwayPointFilter();
+    }
+
     // Bound to a plain click (no drag) on empty diagram space — see
     // AirportDiagramView.TaxiwayClearSelectionCommand/EndPan. Deselects every
-    // taxiway, which in turn drops the Taxi Paths grid's filter back to
-    // "show everything" (RefreshTaxiwayFilter) and closes the batch-edit
-    // popover if it was open (ShowTaxiwayBatchEditPopover requires a
-    // non-empty selection).
+    // taxiway AND every taxiway point (both selections live on the same
+    // diagram, so a background click resets both at once), which in turn
+    // drops the Taxi Paths/Taxiway Points grids' filters back to "show
+    // everything" and closes the batch-edit popover if it was open
+    // (ShowTaxiwayBatchEditPopover requires a non-empty taxiway selection).
     private void ClearTaxiwaySelection()
     {
         if (Diagram is null) return;
 
         foreach (var shape in Diagram.TaxiwaySegments)
             shape.IsSelected = false;
+        foreach (var shape in Diagram.TaxiwayPoints)
+            shape.IsSelected = false;
         RefreshTaxiwayFilter();
+        RefreshTaxiwayPointFilter();
     }
 
     // Bound to a right-click on the diagram (see
@@ -530,16 +696,76 @@ public class MainViewModel : ViewModelBase
     // selection to open a popover for."
     private void RefreshTaxiwayFilter()
     {
+        // The diagram click-to-select filter narrows TaxiPathEdits down to
+        // the selected shape(s) first (or leaves every row as candidates if
+        // nothing's selected); TaxiPathFilter's per-column criteria then
+        // narrow THAT further — the two combine (AND), neither replaces the
+        // other. A field filter with no diagram selection active still
+        // applies against every row.
+        IEnumerable<TaxiPathEditViewModel> candidates = TaxiPathEdits;
+        if (Diagram != null)
+        {
+            var selectedIndexes = SelectedTaxiwayShapes.Select(s => s.SourceIndex).ToHashSet();
+            if (selectedIndexes.Count > 0)
+                candidates = TaxiPathEdits.Where((_, i) => selectedIndexes.Contains(i));
+        }
+
+        VisibleTaxiPathEdits = candidates.Where(MatchesTaxiPathFilter).ToList();
+    }
+
+    // Every column in the Taxi Paths grid has its own filter (TaxiPathFilter)
+    // — a string filter (Name/Start/End/Rwy #) matches as a case-insensitive
+    // substring against the field's displayed text, an enum/bool filter
+    // (null meaning "(any)") requires an exact match. An empty/null filter
+    // value always matches, so a row with every filter left blank always
+    // passes.
+    private bool MatchesTaxiPathFilter(TaxiPathEditViewModel edit)
+    {
+        var f = TaxiPathFilter;
+
+        if (!string.IsNullOrEmpty(f.NameFilter) &&
+            !ResolveTaxiNameValue(edit.TaxiNameId).Contains(f.NameFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (f.TypeFilter is { } type && edit.Type != type) return false;
+        if (!string.IsNullOrEmpty(f.StartIndexFilter) &&
+            !edit.StartIndex.ToString().Contains(f.StartIndexFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.IsNullOrEmpty(f.EndIndexFilter) &&
+            !edit.EndIndex.ToString().Contains(f.EndIndexFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.IsNullOrEmpty(f.RunwayNumberFilter) &&
+            !edit.RunwayNumber.ToString().Contains(f.RunwayNumberFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (f.RunwayDesignatorFilter is { } rd && edit.RunwayDesignator != rd) return false;
+        if (f.LeftEdgeFilter is { } le && edit.LeftEdge != le) return false;
+        if (f.LeftEdgeLightedFilter is { } lel && edit.LeftEdgeLighted != lel) return false;
+        if (f.RightEdgeFilter is { } re && edit.RightEdge != re) return false;
+        if (f.RightEdgeLightedFilter is { } rel && edit.RightEdgeLighted != rel) return false;
+        if (f.CenterLineFilter is { } cl && edit.CenterLine != cl) return false;
+        if (f.CenterLineLightedFilter is { } cll && edit.CenterLineLighted != cll) return false;
+        if (f.HiddenFromDiagramFilter is { } hfd && edit.IsHiddenFromDiagram != hfd) return false;
+
+        return true;
+    }
+
+    // Same idea as RefreshTaxiwayFilter, for the Taxiway Points grid —
+    // matched by TaxiwayPointShape.Index/TaxiwayPointEditViewModel.Index
+    // (the shared sim TAXI_POINT index both lists are keyed by), not list
+    // position: unlike TaxiPathEdits/TaxiPathSegment, TaxiwayPointEdits isn't
+    // a 1:1, same-order wrapper over a raw AirportDetails list that a plain
+    // SourceIndex could point into.
+    private void RefreshTaxiwayPointFilter()
+    {
         if (Diagram is null)
         {
-            VisibleTaxiPathEdits = TaxiPathEdits;
+            VisibleTaxiwayPointEdits = TaxiwayPointEdits;
             return;
         }
 
-        var selectedIndexes = SelectedTaxiwayShapes.Select(s => s.SourceIndex).ToHashSet();
-        VisibleTaxiPathEdits = selectedIndexes.Count == 0
-            ? TaxiPathEdits
-            : TaxiPathEdits.Where((_, i) => selectedIndexes.Contains(i)).ToList();
+        var selectedIndexes = Diagram.TaxiwayPoints.Where(p => p.IsSelected).Select(p => p.Index).ToHashSet();
+        VisibleTaxiwayPointEdits = selectedIndexes.Count == 0
+            ? TaxiwayPointEdits
+            : TaxiwayPointEdits.Where(e => selectedIndexes.Contains(e.Index)).ToList();
     }
 
     // Called from MainWindow's code-behind on the Taxi Paths grid's

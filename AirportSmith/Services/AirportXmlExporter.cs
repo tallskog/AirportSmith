@@ -423,8 +423,25 @@ public class AirportXmlExporter : IAirportXmlExporter
             new XAttribute("excludeVegetationAround", "TRUE"),
             new XAttribute("excludeVegetationInside", "TRUE"));
 
-        if (path.TaxiNameId is { } id && taxiNameIndices.TryGetValue(id, out var nameIndex))
+        // name is documented as valid only when type is NOT "RUNWAY" (flagged
+        // directly by the user against a real exported file, same source as
+        // the number/designator restriction below, just the opposite
+        // direction) — a RUNWAY-type path's identity comes from
+        // number/designator (which runway it's associated with), not a taxi
+        // name. Previously emitted unconditionally whenever TaxiNameId
+        // happened to resolve, which put an invalid `name` attribute on
+        // every RUNWAY-type path pointing at a (usually blank/shared)
+        // TaxiName — the Scenery Editor's own validation for this case
+        // wasn't confirmed directly, but per the project's own prior
+        // "point not linked to a hold short" investigation, an invalid
+        // attribute rejecting the whole <TaxiwayPath> element would silently
+        // orphan any point ONLY reachable through it, matching exactly the
+        // "point 0/12 shows unlinked" symptom reported against OIBK.
+        if (xmlType != "RUNWAY" && path.TaxiNameId is { } id && taxiNameIndices.TryGetValue(id, out var nameIndex))
             element.Add(new XAttribute("name", nameIndex));
+        else if (xmlType == "RUNWAY" && path.TaxiNameId is { } runwayNameId && taxiNameIndices.ContainsKey(runwayNameId))
+            warnings.Add($"Taxi path {path.StartIndex}->{path.EndIndex} has type RUNWAY with a resolvable taxi " +
+                "name — the XML format only allows `name` on non-RUNWAY paths, so this was left unset.");
 
         // number/designator are documented as valid ONLY when type="RUNWAY"
         // (confirmed against the SDK's taxiway-xml-properties doc, flagged

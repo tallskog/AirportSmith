@@ -51,6 +51,20 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(TaxiwayContextMenuCommandProperty, value);
     }
 
+    // Fired by a click on a taxiway point marker — see
+    // TaxiwayPointShape_MouseLeftButtonDown. Same Edit-tab-only null-guard
+    // convention as TaxiwayClickCommand; the read-only Diagram tab leaves
+    // this unset, so a click there still just pans (same as clicking a
+    // taxiway path there).
+    public static readonly DependencyProperty TaxiwayPointClickCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwayPointClickCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwayPointClickCommand
+    {
+        get => (ICommand?)GetValue(TaxiwayPointClickCommandProperty);
+        set => SetValue(TaxiwayPointClickCommandProperty, value);
+    }
+
     private const double ZoomStep = 1.15;
 
     // A mouse-down/mouse-up pair with less movement than this (device-
@@ -196,6 +210,21 @@ public partial class AirportDiagramView : UserControl
         var request = new TaxiwaySelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
         if (TaxiwayClickCommand.CanExecute(request))
             TaxiwayClickCommand.Execute(request);
+        e.Handled = true;
+    }
+
+    // Wired on each taxiway point marker's Path (see AirportDiagramView.xaml's
+    // TaxiwayPoints template) — same pattern as TaxiwayShape_MouseLeftButtonDown
+    // above, a separate command/DTO since points and taxi paths are
+    // independent selections (see MainViewModel.ToggleTaxiwayPointSelection).
+    private void TaxiwayPointShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TaxiwayPointClickCommand is null) return;
+        if (sender is not FrameworkElement { DataContext: TaxiwayPointShape shape }) return;
+
+        var request = new TaxiwayPointSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        if (TaxiwayPointClickCommand.CanExecute(request))
+            TaxiwayPointClickCommand.Execute(request);
         e.Handled = true;
     }
 }
