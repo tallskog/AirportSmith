@@ -1044,6 +1044,74 @@ watermark itself still reaches the `TextBox` underneath.
   including the `EDGE_LIGHTS` INT8 risk above, which needs a live sim with a
   real airport of known edge-light intensity to confirm.
 
+### Amendment: VASI/PAPI position editing, diagram rendering, and click-to-place
+
+**User story:** As a user, after enabling a VASI/PAPI on a runway that
+didn't have one, I can see where it will sit relative to the runway on the
+diagram (rather than guessing meaningless Bias X/Z numbers blind), and
+either type numbers or click a spot on the diagram to place it there.
+
+Before this, `Runway.*VasiBiasXMeters`/`BiasZMeters`/`SpacingMeters` (added
+in the XML-export epic below, for `<Vasi>`'s required `biasX`/`biasZ`/
+`spacing` attributes) were extracted from SimConnect but had no Edit tab UI
+at all — only Type/AngleDeg were editable, so a VASI/PAPI enabled from
+"(none)" had no way to get a real position and exported at `0,0,0` with a
+warning (see `AirportXmlExporter.AddVasi`).
+
+- The Runways grid gains, per VASI/PAPI slot (`Pri L`/`Pri R`/`Sec L`/`Sec R`
+  × 4): an editable **X**/**Z**/**Spacing** column (`RunwayEditViewModel`'s
+  new `*VasiBiasXMeters`/`BiasZMeters`/`SpacingMeters` properties, writing
+  straight through to the existing `Runway` fields) and a **Place** button.
+- Picking a Type for a slot that was previously "(none)" auto-suggests a
+  starting position — 300m inward from that end's threshold
+  (`BiasZMeters`), 0m lateral offset (`BiasXMeters`), 15m `SpacingMeters` —
+  rather than leaving it at the `0,0,0`-plus-warning default. Re-picking a
+  *different* Type on an already-positioned slot (e.g. real sim-extracted
+  data) never overwrites that position — the suggestion only fires when
+  Bias X/Z/Spacing are all still completely unset
+  (`RunwayEditViewModelTests.EnablingVasiFromNone_SuggestsDefaultPosition300MetersFromThreshold`/
+  `ChangingVasiTypeOnAlreadyPositionedSlot_DoesNotOverwritePosition`/
+  `ClearingVasiTypeToNull_DoesNotApplyDefaultPosition`, plus one fact per
+  remaining slot).
+- `AirportDiagram` gains `VasiLights` — unlike `TaxiwaySegments`/
+  `TaxiwayPoints` (which only exist for what the airport actually has),
+  `AirportDiagramProjector.Project` always creates exactly one `VasiShape`
+  per slot per runway, and `IsInstalled` (that slot's Type != null) drives
+  whether it's drawn — so enabling a VASI purely through the Type picker (no
+  reload) just flips an existing shape visible. Position is a small cyan
+  marker plus a short perpendicular "wing bar" line sized from
+  `SpacingMeters` — a diagram-level schematic, not a literal light-by-light
+  reproduction of PAPI's 2/4 lights or VASI's near/far bars, same
+  simplification precedent as the approach-light rail. `BiasZMeters` is
+  measured inward from that slot's own end's threshold and `BiasXMeters`
+  perpendicular to the centerline — like `TaxiPathSegment`'s own BIAS_X/
+  BIAS_Z, this axis/sign convention is **UNCONFIRMED against a live sim**,
+  it's the best-documented assumption pending verification.
+  (`AirportDiagramProjectorTests.Project_VasiLights_AlwaysFourSlotsPerRunway_OnlyInstalledOneMarkedInstalled`).
+- Editing a slot's Type/BiasX/BiasZ/Spacing on the Edit tab immediately moves
+  the matching `VasiShape` on the diagram — `MainViewModel.RefreshVasiShape`
+  recomputes just that one shape's Position/WingBarStart/WingBarEnd/
+  IsInstalled (`AirportDiagramProjector.ComputeVasiPlacement`) and mutates it
+  in place, the same re-projecting-would-reset-zoom/pan-and-selection
+  rationale every other mutable diagram shape in this app already follows.
+- Clicking a slot's **Place** button arms click-to-place for it
+  (`MainViewModel.ArmPrimaryLeftVasiPlacementCommand` and its three
+  siblings); a status banner appears over the Edit tab's diagram naming the
+  runway and slot. The next plain click on empty diagram space (not on an
+  existing taxiway/point/runway) then writes that slot's Bias X/Z from the
+  clicked position (`AirportDiagramProjector.ComputeVasiBias`, the inverse of
+  the placement math above) instead of clearing the taxiway selection, and
+  disarms — `AirportDiagramView`'s new `VasiPlacementCommand` is tried first
+  in `EndPan`, falling through to the pre-existing
+  `TaxiwayClearSelectionCommand` whenever nothing is armed
+  (`MainViewModelTests.ArmVasiPlacementCommand_ArmsPlacementAndSetsStatusText`/
+  `PlaceVasiCommand_CanExecute_OnlyTrueWhilePlacementArmed`/
+  `PlaceVasiCommand_WritesBiasIntoArmedSlot_UpdatesDiagramShape_AndDisarms`).
+- The Place button/diagram click interaction itself (real WPF mouse input)
+  is not covered by automated tests, same as the rest of this epic's mouse
+  handling — verified manually; the underlying geometry (position math and
+  its exact inverse) is fully unit-tested per the bullets above.
+
 ## v0.1+ — Generate SDK-compatible `<Airport>` XML
 
 **User story:** As a user, after loading and editing an airport, I can click

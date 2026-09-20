@@ -317,6 +317,36 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <!-- One VasiShape per Runway VASI/PAPI slot, always present in the
+                 bound AirportDiagram (see VasiShape's own doc comment) — IsInstalled
+                 (that slot's Type != null) is the only thing gating Visibility, so
+                 setting a Type via the Runways grid's picker makes one of these appear
+                 with no reload needed. Same GeometryGroup-of-absolute-coordinate-
+                 geometries mechanism as ParkingSpots above: a small circle at Position
+                 plus a short line for WingBarStart/WingBarEnd (a schematic light-array
+                 bar, not a literal light-by-light reproduction — see VasiShape's own
+                 comment on WingBarStart/WingBarEnd). Drawn after ParkingSpots but
+                 before TaxiwayPoints so a VASI placed very close to a taxi point still
+                 lets the taxi point's own click target win on top. -->
+            <ItemsControl ItemsSource="{Binding VasiLights}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Path Stroke="DarkCyan" StrokeThickness="1" Fill="Cyan"
+                              Visibility="{Binding IsInstalled, Converter={StaticResource BoolToVisibility}}">
+                            <Path.Data>
+                                <GeometryGroup>
+                                    <EllipseGeometry Center="{Binding Position, Converter={StaticResource Point2DToPoint}}" RadiusX="4" RadiusY="4"/>
+                                    <LineGeometry StartPoint="{Binding WingBarStart, Converter={StaticResource Point2DToPoint}}" EndPoint="{Binding WingBarEnd, Converter={StaticResource Point2DToPoint}}"/>
+                                </GeometryGroup>
+                            </Path.Data>
+                        </Path>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </Canvas>
     </Border>
 </UserControl>

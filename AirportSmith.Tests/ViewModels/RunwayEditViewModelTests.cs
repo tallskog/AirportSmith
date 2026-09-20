@@ -60,4 +60,106 @@ public class RunwayEditViewModelTests
         Assert.Contains(nameof(RunwayEditViewModel.EdgeLightIntensity), raised);
         Assert.Contains(nameof(RunwayEditViewModel.SecondarySystemType), raised);
     }
+
+    [Fact]
+    public void EnablingVasiFromNone_SuggestsDefaultPosition300MetersFromThreshold()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.PrimaryLeftVasiType = VasiType.Papi4;
+
+        Assert.Equal(0, runway.PrimaryLeftVasiBiasXMeters);
+        Assert.Equal(300, runway.PrimaryLeftVasiBiasZMeters);
+        Assert.Equal(15, runway.PrimaryLeftVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void ChangingVasiTypeOnAlreadyPositionedSlot_DoesNotOverwritePosition()
+    {
+        var runway = new Runway
+        {
+            PrimaryLeftVasiType = VasiType.Vasi21,
+            PrimaryLeftVasiBiasXMeters = 42,
+            PrimaryLeftVasiBiasZMeters = 123,
+            PrimaryLeftVasiSpacingMeters = 7,
+        };
+        var vm = new RunwayEditViewModel(runway);
+
+        // Re-picking a different type on an already-positioned slot (e.g.
+        // sim-extracted data) must never clobber the real position with the
+        // "new install" defaults.
+        vm.PrimaryLeftVasiType = VasiType.Papi2;
+
+        Assert.Equal(42, runway.PrimaryLeftVasiBiasXMeters);
+        Assert.Equal(123, runway.PrimaryLeftVasiBiasZMeters);
+        Assert.Equal(7, runway.PrimaryLeftVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void ClearingVasiTypeToNull_DoesNotApplyDefaultPosition()
+    {
+        var runway = new Runway { PrimaryLeftVasiType = VasiType.Papi4 };
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.PrimaryLeftVasiType = null;
+
+        Assert.Null(runway.PrimaryLeftVasiBiasXMeters);
+        Assert.Null(runway.PrimaryLeftVasiBiasZMeters);
+        Assert.Null(runway.PrimaryLeftVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void EnablingVasiFromNone_AppliesDefaultsForPrimaryRightSlot()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.PrimaryRightVasiType = VasiType.Papi2;
+
+        Assert.Equal(0, runway.PrimaryRightVasiBiasXMeters);
+        Assert.Equal(300, runway.PrimaryRightVasiBiasZMeters);
+        Assert.Equal(15, runway.PrimaryRightVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void EnablingVasiFromNone_AppliesDefaultsForSecondaryLeftSlot()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.SecondaryLeftVasiType = VasiType.Papi2;
+
+        Assert.Equal(0, runway.SecondaryLeftVasiBiasXMeters);
+        Assert.Equal(300, runway.SecondaryLeftVasiBiasZMeters);
+        Assert.Equal(15, runway.SecondaryLeftVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void EnablingVasiFromNone_AppliesDefaultsForSecondaryRightSlot()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.SecondaryRightVasiType = VasiType.Papi2;
+
+        Assert.Equal(0, runway.SecondaryRightVasiBiasXMeters);
+        Assert.Equal(300, runway.SecondaryRightVasiBiasZMeters);
+        Assert.Equal(15, runway.SecondaryRightVasiSpacingMeters);
+    }
+
+    [Fact]
+    public void SettingBiasAndSpacingProperties_WriteThroughToWrappedRunway()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+
+        vm.SecondaryRightVasiBiasXMeters = -5;
+        vm.SecondaryRightVasiBiasZMeters = 250;
+        vm.SecondaryRightVasiSpacingMeters = 9;
+
+        Assert.Equal(-5, runway.SecondaryRightVasiBiasXMeters);
+        Assert.Equal(250, runway.SecondaryRightVasiBiasZMeters);
+        Assert.Equal(9, runway.SecondaryRightVasiSpacingMeters);
+    }
 }

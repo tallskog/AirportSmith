@@ -170,6 +170,34 @@ public class MainViewModel : ViewModelBase
         }
     }
 
+    // Set by one of the ArmVasiPlacementCommand family (a per-slot "Place"
+    // button next to that VASI/PAPI's Bias X/Z/Spacing columns in the
+    // Runways grid) and consumed by PlaceVasiCommand, which
+    // AirportDiagramView's next background click on the Edit tab's diagram
+    // fires (see its own VasiPlacementCommand). A workspace/interaction
+    // state like HideAllTaxiwayPoints below — never persisted, reset
+    // whenever a new airport loads.
+    private (int RunwayIndex, VasiSlot Slot)? _armedVasiPlacement;
+
+    // Drives a status label near the Edit tab's diagram so the user knows
+    // placement mode is active and what they're about to place, since a
+    // silent "click the diagram to set a value" mode would otherwise be easy
+    // to forget about mid-session.
+    public bool IsVasiPlacementArmed => _armedVasiPlacement != null;
+
+    public string? VasiPlacementStatusText => _armedVasiPlacement is { } armed && armed.RunwayIndex < RunwayEdits.Count
+        ? $"Click the diagram to place the {RunwayEdits[armed.RunwayIndex].PrimaryDesignation}/{RunwayEdits[armed.RunwayIndex].SecondaryDesignation} {DescribeVasiSlot(armed.Slot)} VASI/PAPI"
+        : null;
+
+    private static string DescribeVasiSlot(VasiSlot slot) => slot switch
+    {
+        VasiSlot.PrimaryLeft => "primary-end left",
+        VasiSlot.PrimaryRight => "primary-end right",
+        VasiSlot.SecondaryLeft => "secondary-end left",
+        VasiSlot.SecondaryRight => "secondary-end right",
+        _ => slot.ToString(),
+    };
+
     // The shared, user-managed taxi name list, directly editable via the Edit
     // tab's own Taxi Names grid (add/rename/delete) — a single long-lived
     // collection (cleared/repopulated on each load, not replaced) so that
@@ -289,6 +317,11 @@ public class MainViewModel : ViewModelBase
     public RelayCommand ApplyTaxiwayBatchEditCommand { get; }
     public RelayCommand CloseTaxiwayBatchEditCommand { get; }
     public RelayCommand ClearTaxiPathFilterCommand { get; }
+    public RelayCommand<RunwayEditViewModel> ArmPrimaryLeftVasiPlacementCommand { get; }
+    public RelayCommand<RunwayEditViewModel> ArmPrimaryRightVasiPlacementCommand { get; }
+    public RelayCommand<RunwayEditViewModel> ArmSecondaryLeftVasiPlacementCommand { get; }
+    public RelayCommand<RunwayEditViewModel> ArmSecondaryRightVasiPlacementCommand { get; }
+    public RelayCommand<Point2D> PlaceVasiCommand { get; }
 
     public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null)
     {
@@ -314,6 +347,11 @@ public class MainViewModel : ViewModelBase
         ApplyTaxiwayBatchEditCommand = new RelayCommand(ApplyTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
         CloseTaxiwayBatchEditCommand = new RelayCommand(CloseTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
         ClearTaxiPathFilterCommand = new RelayCommand(TaxiPathFilter.Reset, () => TaxiPathFilter.HasAnyFilter);
+        ArmPrimaryLeftVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.PrimaryLeft), edit => edit != null);
+        ArmPrimaryRightVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.PrimaryRight), edit => edit != null);
+        ArmSecondaryLeftVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.SecondaryLeft), edit => edit != null);
+        ArmSecondaryRightVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.SecondaryRight), edit => edit != null);
+        PlaceVasiCommand = new RelayCommand<Point2D>(PlaceVasi, _ => _armedVasiPlacement != null);
         // A single long-lived object (unlike TaxiwayBatchEdit, which is
         // reset per selection, not per subscription) — subscribed once here
         // rather than per-SetAirport, so a filter typed before an airport is
@@ -352,6 +390,12 @@ public class MainViewModel : ViewModelBase
         {
             _hideAllTaxiwayPoints = false;
             OnPropertyChanged(nameof(HideAllTaxiwayPoints));
+        }
+
+        if (_armedVasiPlacement != null)
+        {
+            _armedVasiPlacement = null;
+            RaiseVasiPlacementChanged();
         }
 
         TaxiNames.Clear();
@@ -534,6 +578,9 @@ public class MainViewModel : ViewModelBase
     {
         if (e.PropertyName == nameof(RunwayEditViewModel.IsHiddenFromDiagram))
             RefreshAllRunwayVisibility();
+
+        if (sender is RunwayEditViewModel edit && VasiSlotForProperty(e.PropertyName) is { } slot)
+            RefreshVasiShape(edit, slot);
     }
 
     private void RefreshAllRunwayVisibility()
@@ -544,6 +591,119 @@ public class MainViewModel : ViewModelBase
         {
             if (shape.SourceIndex >= RunwayEdits.Count) continue;
             shape.IsVisible = !RunwayEdits[shape.SourceIndex].IsHiddenFromDiagram;
+        }
+    }
+
+    // Maps a changed RunwayEditViewModel property back to the VASI slot it
+    // affects the diagram geometry of — Type (installed/not), BiasX/BiasZ
+    // (position), and Spacing (wing bar width) all matter; AngleDeg doesn't
+    // affect anything drawn, so it's deliberately not mapped here.
+    private static VasiSlot? VasiSlotForProperty(string? propertyName) => propertyName switch
+    {
+        nameof(RunwayEditViewModel.PrimaryLeftVasiType) or nameof(RunwayEditViewModel.PrimaryLeftVasiBiasXMeters)
+            or nameof(RunwayEditViewModel.PrimaryLeftVasiBiasZMeters) or nameof(RunwayEditViewModel.PrimaryLeftVasiSpacingMeters)
+            => VasiSlot.PrimaryLeft,
+        nameof(RunwayEditViewModel.PrimaryRightVasiType) or nameof(RunwayEditViewModel.PrimaryRightVasiBiasXMeters)
+            or nameof(RunwayEditViewModel.PrimaryRightVasiBiasZMeters) or nameof(RunwayEditViewModel.PrimaryRightVasiSpacingMeters)
+            => VasiSlot.PrimaryRight,
+        nameof(RunwayEditViewModel.SecondaryLeftVasiType) or nameof(RunwayEditViewModel.SecondaryLeftVasiBiasXMeters)
+            or nameof(RunwayEditViewModel.SecondaryLeftVasiBiasZMeters) or nameof(RunwayEditViewModel.SecondaryLeftVasiSpacingMeters)
+            => VasiSlot.SecondaryLeft,
+        nameof(RunwayEditViewModel.SecondaryRightVasiType) or nameof(RunwayEditViewModel.SecondaryRightVasiBiasXMeters)
+            or nameof(RunwayEditViewModel.SecondaryRightVasiBiasZMeters) or nameof(RunwayEditViewModel.SecondaryRightVasiSpacingMeters)
+            => VasiSlot.SecondaryRight,
+        _ => null,
+    };
+
+    // Pushes a recomputed Position/WingBarStart/WingBarEnd/IsInstalled
+    // straight onto the one VasiShape this edit/slot corresponds to, instead
+    // of re-running the whole projection — see VasiShape's own doc comment
+    // for why (would reset zoom/pan/selection).
+    private void RefreshVasiShape(RunwayEditViewModel edit, VasiSlot slot)
+    {
+        if (Diagram is null || Airport is null) return;
+        var runwayIndex = IndexOfRunwayEdit(edit);
+        if (runwayIndex < 0) return;
+
+        var shape = Diagram.VasiLights.FirstOrDefault(v => v.SourceRunwayIndex == runwayIndex && v.Slot == slot);
+        if (shape is null) return;
+
+        var placement = AirportDiagramProjector.ComputeVasiPlacement(Diagram, Airport, runwayIndex, slot);
+        shape.Position = placement.Position;
+        shape.WingBarStart = placement.WingBarStart;
+        shape.WingBarEnd = placement.WingBarEnd;
+        shape.IsInstalled = placement.IsInstalled;
+    }
+
+    // RunwayEdits is built 1:1, unfiltered, from Airport.Runways (see
+    // SetAirport) — an ordinary reference-equality search is the simplest
+    // way back to that same position, and runway counts are small enough
+    // that this never needs to be an indexed lookup.
+    private int IndexOfRunwayEdit(RunwayEditViewModel edit)
+    {
+        for (var i = 0; i < RunwayEdits.Count; i++)
+            if (ReferenceEquals(RunwayEdits[i], edit)) return i;
+        return -1;
+    }
+
+    // Arms click-to-place for one VASI/PAPI slot — the next background click
+    // on the Edit tab's diagram (see PlaceVasi) writes that slot's Bias X/Z
+    // from the clicked position instead of clearing the taxiway selection.
+    private void ArmVasiPlacement(RunwayEditViewModel? edit, VasiSlot slot)
+    {
+        if (edit is null) return;
+        var runwayIndex = IndexOfRunwayEdit(edit);
+        if (runwayIndex < 0) return;
+
+        _armedVasiPlacement = (runwayIndex, slot);
+        RaiseVasiPlacementChanged();
+        PlaceVasiCommand.RaiseCanExecuteChanged();
+    }
+
+    private void PlaceVasi(Point2D point)
+    {
+        if (_armedVasiPlacement is not { } armed || Airport is null || Diagram is null) return;
+        if (armed.RunwayIndex >= RunwayEdits.Count)
+        {
+            _armedVasiPlacement = null;
+            RaiseVasiPlacementChanged();
+            return;
+        }
+
+        var (biasX, biasZ) = AirportDiagramProjector.ComputeVasiBias(Diagram, Airport, armed.RunwayIndex, armed.Slot, point);
+        SetVasiBias(RunwayEdits[armed.RunwayIndex], armed.Slot, biasX, biasZ);
+
+        _armedVasiPlacement = null;
+        RaiseVasiPlacementChanged();
+        PlaceVasiCommand.RaiseCanExecuteChanged();
+    }
+
+    private void RaiseVasiPlacementChanged()
+    {
+        OnPropertyChanged(nameof(IsVasiPlacementArmed));
+        OnPropertyChanged(nameof(VasiPlacementStatusText));
+    }
+
+    private static void SetVasiBias(RunwayEditViewModel edit, VasiSlot slot, double biasX, double biasZ)
+    {
+        switch (slot)
+        {
+            case VasiSlot.PrimaryLeft:
+                edit.PrimaryLeftVasiBiasXMeters = biasX;
+                edit.PrimaryLeftVasiBiasZMeters = biasZ;
+                break;
+            case VasiSlot.PrimaryRight:
+                edit.PrimaryRightVasiBiasXMeters = biasX;
+                edit.PrimaryRightVasiBiasZMeters = biasZ;
+                break;
+            case VasiSlot.SecondaryLeft:
+                edit.SecondaryLeftVasiBiasXMeters = biasX;
+                edit.SecondaryLeftVasiBiasZMeters = biasZ;
+                break;
+            case VasiSlot.SecondaryRight:
+                edit.SecondaryRightVasiBiasXMeters = biasX;
+                edit.SecondaryRightVasiBiasZMeters = biasZ;
+                break;
         }
     }
 

@@ -3,6 +3,10 @@ using AirportSmith.Models.Diagram;
 
 namespace AirportSmith.Services;
 
+// Screen-space result of AirportDiagramProjector.ComputeVasiPlacement — see
+// that method's own doc comment.
+public readonly record struct VasiPlacement(Point2D Position, Point2D WingBarStart, Point2D WingBarEnd, bool IsInstalled);
+
 // Pure computation (no I/O), so it's tested directly with plain xUnit facts
 // rather than via the interface+fake pattern reserved for I/O boundaries
 // like ISimConnectService.
@@ -41,10 +45,90 @@ public static class AirportDiagramProjector
     private const double RedCrossBarDistanceMeters = 300;        // ALSF-1/ALSF-2 red bar distance from threshold (~1000ft)
     private const double RedCrossBarHalfWidthMeters = 15;
 
+    // Fallback half-width for a VASI/PAPI's schematic wing bar (see
+    // VasiShape's own doc comment) when SpacingMeters is null/non-positive —
+    // just enough to render a visible short bar, not a real light-unit
+    // spacing.
+    private const double DefaultVasiWingBarHalfWidthMeters = 6;
+
     // Raw local-meters coordinate in the flat-earth tangent plane, before
     // normalization to canvas space. Not the public Point2D (screen-space)
     // type — kept private so callers can't confuse the two coordinate spaces.
     private readonly record struct LocalPoint(double X, double Z);
+
+    // A runway's local-meters geometry shared by every feature computed
+    // relative to it (thresholds, pavement extensions, approach lights, and
+    // now VASI/PAPI) — extracted so ComputeVasiPlacement/ComputeVasiBias
+    // below can recompute just one runway's frame on demand (e.g. from a
+    // live Edit tab change or a diagram click) without re-running Project's
+    // whole loop.
+    private readonly record struct RunwayFrame(
+        LocalPoint Threshold1,
+        LocalPoint Threshold2,
+        (double X, double Z) Forward,
+        (double X, double Z) Right);
+
+    private static RunwayFrame ComputeRunwayFrame(AirportDetails airport, Runway runway)
+    {
+        var (cx, cz) = GeoProjection.ProjectLatLon(airport.Latitude, airport.Longitude, runway.Latitude, runway.Longitude);
+        var headingRad = DegToRad(runway.HeadingDeg);
+        var forward = (X: Math.Sin(headingRad), Z: Math.Cos(headingRad));
+        var halfLength = runway.LengthMeters / 2;
+
+        // HeadingDeg is the heading of travel when using the primary end —
+        // see Project's own note on this: the primary threshold sits at the
+        // -heading end.
+        var threshold1 = new LocalPoint(cx - forward.X * halfLength, cz - forward.Z * halfLength);
+        var threshold2 = new LocalPoint(cx + forward.X * halfLength, cz + forward.Z * halfLength);
+        var right = (X: Math.Cos(headingRad), Z: -Math.Sin(headingRad));
+
+        return new RunwayFrame(threshold1, threshold2, forward, right);
+    }
+
+    private static readonly VasiSlot[] VasiSlots =
+        [VasiSlot.PrimaryLeft, VasiSlot.PrimaryRight, VasiSlot.SecondaryLeft, VasiSlot.SecondaryRight];
+
+    // Centralizes the per-slot property mapping so both the initial
+    // projection loop and ComputeVasiPlacement/ComputeVasiBias (called later,
+    // independently, for a single slot at a time) agree on which of
+    // Runway's four *Vasi* property groups a VasiSlot means, and which end's
+    // threshold it's relative to.
+    private static (VasiType? Type, double? BiasX, double? BiasZ, double? Spacing, bool IsPrimary) GetVasiSlotData(Runway r, VasiSlot slot) => slot switch
+    {
+        VasiSlot.PrimaryLeft => (r.PrimaryLeftVasiType, r.PrimaryLeftVasiBiasXMeters, r.PrimaryLeftVasiBiasZMeters, r.PrimaryLeftVasiSpacingMeters, true),
+        VasiSlot.PrimaryRight => (r.PrimaryRightVasiType, r.PrimaryRightVasiBiasXMeters, r.PrimaryRightVasiBiasZMeters, r.PrimaryRightVasiSpacingMeters, true),
+        VasiSlot.SecondaryLeft => (r.SecondaryLeftVasiType, r.SecondaryLeftVasiBiasXMeters, r.SecondaryLeftVasiBiasZMeters, r.SecondaryLeftVasiSpacingMeters, false),
+        VasiSlot.SecondaryRight => (r.SecondaryRightVasiType, r.SecondaryRightVasiBiasXMeters, r.SecondaryRightVasiBiasZMeters, r.SecondaryRightVasiSpacingMeters, false),
+        _ => throw new ArgumentOutOfRangeException(nameof(slot)),
+    };
+
+    // BiasZMeters is measured inward from that slot's own end's threshold
+    // (same "inward" convention RunwayEndFeatures.ThresholdMarking uses —
+    // toward the runway's interior, i.e. +forward for the primary end, -forward
+    // for the secondary end) and BiasXMeters perpendicular to the centerline
+    // along the (unsigned) right vector — BIAS_X/BIAS_Z's exact axis/sign
+    // convention is UNCONFIRMED against a live sim (same caveat as
+    // TaxiPathSegment's own BIAS_X/BIAS_Z), so this is the best-documented
+    // assumption pending live verification, consistent both here and in
+    // ComputeVasiBias's inverse.
+    private static (LocalPoint Position, LocalPoint WingA, LocalPoint WingB, bool IsInstalled) ComputeVasiLocal(RunwayFrame frame, Runway runway, VasiSlot slot)
+    {
+        var (type, biasX, biasZ, spacing, isPrimary) = GetVasiSlotData(runway, slot);
+        var threshold = isPrimary ? frame.Threshold1 : frame.Threshold2;
+        var inward = isPrimary ? frame.Forward : (X: -frame.Forward.X, Z: -frame.Forward.Z);
+        var z = biasZ ?? 0;
+        var x = biasX ?? 0;
+
+        var position = new LocalPoint(
+            threshold.X + inward.X * z + frame.Right.X * x,
+            threshold.Z + inward.Z * z + frame.Right.Z * x);
+
+        var halfBar = spacing is > 0 ? spacing.Value : DefaultVasiWingBarHalfWidthMeters;
+        var wingA = new LocalPoint(position.X + frame.Right.X * halfBar, position.Z + frame.Right.Z * halfBar);
+        var wingB = new LocalPoint(position.X - frame.Right.X * halfBar, position.Z - frame.Right.Z * halfBar);
+
+        return (position, wingA, wingB, type != null);
+    }
 
     // AIM 2-3-3: the displaced-threshold zone (still usable runway pavement,
     // just not for landing) is marked entirely in WHITE — a threshold bar at
@@ -116,12 +200,6 @@ public static class AirportDiagramProjector
 
     public static AirportDiagram Project(AirportDetails airport)
     {
-        LocalPoint ProjectLatLon(double lat, double lon)
-        {
-            var (x, z) = GeoProjection.ProjectLatLon(airport.Latitude, airport.Longitude, lat, lon);
-            return new LocalPoint(x, z);
-        }
-
         // Both endpoints must already be in the local-meters plane — builds
         // the 4 corners of a rectangle spanning between them, offset by
         // +/-halfWidthOffset on each end. Shared by every pavement rectangle
@@ -136,26 +214,24 @@ public static class AirportDiagramProjector
         ];
 
         var runways = new List<RunwayWorkingData>();
+        var vasiWorking = new List<(int RunwayIndex, VasiSlot Slot, LocalPoint Position, LocalPoint WingA, LocalPoint WingB, bool IsInstalled)>();
         for (var runwaySourceIndex = 0; runwaySourceIndex < airport.Runways.Count; runwaySourceIndex++)
         {
             var runway = airport.Runways[runwaySourceIndex];
-            var center = ProjectLatLon(runway.Latitude, runway.Longitude);
-            var headingRad = DegToRad(runway.HeadingDeg);
-            var forward = (X: Math.Sin(headingRad), Z: Math.Cos(headingRad));
-            var halfLength = runway.LengthMeters / 2;
-            var halfWidth = runway.WidthMeters / 2;
-
             // HeadingDeg is the heading of travel when using the primary
             // end — i.e. the direction you roll after touching down at the
             // primary threshold (or depart toward). That means the primary
             // threshold itself sits at the -heading end of the runway (you
             // start there and travel +heading), not the +heading end. Only
             // affects which end a label points at on the diagram, not the
-            // rectangle's shape.
-            var threshold1 = new LocalPoint(center.X - forward.X * halfLength, center.Z - forward.Z * halfLength);
-            var threshold2 = new LocalPoint(center.X + forward.X * halfLength, center.Z + forward.Z * halfLength);
-
-            var right = (X: Math.Cos(headingRad), Z: -Math.Sin(headingRad));
+            // rectangle's shape. See ComputeRunwayFrame.
+            var frame = ComputeRunwayFrame(airport, runway);
+            var threshold1 = frame.Threshold1;
+            var threshold2 = frame.Threshold2;
+            var forward = frame.Forward;
+            var right = frame.Right;
+            var halfLength = runway.LengthMeters / 2;
+            var halfWidth = runway.WidthMeters / 2;
             var widthOffset = (X: right.X * halfWidth, Z: right.Z * halfWidth);
 
             var corners = BuildRectangle(threshold1, threshold2, widthOffset);
@@ -309,6 +385,15 @@ public static class AirportDiagramProjector
                 SecondaryBlastPad: Extension(runway.SecondaryBlastPad, threshold2, forward),
                 SecondaryOverrun: Extension(runway.SecondaryOverrun, threshold2, forward),
                 SecondaryApproachLights: ApproachLights(runway.SecondaryApproachLights, threshold2, forward)));
+
+            // Every slot gets a working entry regardless of IsInstalled — see
+            // VasiShape's own doc comment for why (pre-created so enabling a
+            // VASI from the Edit tab can just flip an existing shape visible).
+            foreach (var slot in VasiSlots)
+            {
+                var (position, wingA, wingB, isInstalled) = ComputeVasiLocal(frame, runway, slot);
+                vasiWorking.Add((runwaySourceIndex, slot, position, wingA, wingB, isInstalled));
+            }
         }
 
         var taxiways = new List<(TaxiPathSegment Segment, int SourceIndex, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)>();
@@ -395,7 +480,8 @@ public static class AirportDiagramProjector
             parkingSpots.Add((spot, center, tip));
         }
 
-        var (minX, maxX, minZ, maxZ) = ComputeBounds(runways, taxiways, parkingSpots, taxiwayPointsByIndex.Values);
+        var (minX, maxX, minZ, maxZ) = ComputeBounds(runways, taxiways, parkingSpots, taxiwayPointsByIndex.Values,
+            vasiWorking.Where(v => v.IsInstalled).SelectMany(v => new[] { v.Position, v.WingA, v.WingB }));
 
         Point2D ToScreen(LocalPoint p) => new(
             p.X - minX + CanvasMarginMeters,
@@ -470,8 +556,72 @@ public static class AirportDiagramProjector
                     IsHoldShort = holdShortByIndex.GetValueOrDefault(kvp.Key),
                 })
                 .ToList(),
+            VasiLights = vasiWorking.Select(v => new VasiShape
+            {
+                SourceRunwayIndex = v.RunwayIndex,
+                Slot = v.Slot,
+                Position = ToScreen(v.Position),
+                WingBarStart = ToScreen(v.WingA),
+                WingBarEnd = ToScreen(v.WingB),
+                IsInstalled = v.IsInstalled,
+            }).ToList(),
+            OriginXMeters = CanvasMarginMeters - minX,
+            OriginZMeters = maxZ + CanvasMarginMeters,
         };
     }
+
+    // Screen-space position for one runway's VASI/PAPI slot, reflecting its
+    // CURRENT Bias X/Z/Spacing/Type on the live Runway model — called by
+    // MainViewModel after an Edit tab field change to recompute just that
+    // one VasiShape's Position/WingBarStart/WingBarEnd/IsInstalled without
+    // re-running the whole projection (see VasiShape's own doc comment for
+    // why). Uses diagram's OriginXMeters/OriginZMeters (captured from THIS
+    // airport's own last Project() call) to land in the same screen space
+    // the rest of that diagram's shapes already use.
+    public static VasiPlacement ComputeVasiPlacement(AirportDiagram diagram, AirportDetails airport, int runwayIndex, VasiSlot slot)
+    {
+        var runway = airport.Runways[runwayIndex];
+        var frame = ComputeRunwayFrame(airport, runway);
+        var (position, wingA, wingB, isInstalled) = ComputeVasiLocal(frame, runway, slot);
+
+        return new VasiPlacement(
+            ToScreenPoint(diagram, position),
+            ToScreenPoint(diagram, wingA),
+            ToScreenPoint(diagram, wingB),
+            isInstalled);
+    }
+
+    // Inverse of ComputeVasiPlacement's position math: given a diagram click
+    // (already in the same screen space as every shape's Point2D — see
+    // AirportDiagramView's click handling) and which runway/slot is
+    // currently armed for click-to-place, returns the Bias X/Z meters that
+    // would put that slot's VASI/PAPI exactly there. Same axis/sign
+    // assumption as ComputeVasiLocal — see its own comment.
+    public static (double BiasXMeters, double BiasZMeters) ComputeVasiBias(AirportDiagram diagram, AirportDetails airport, int runwayIndex, VasiSlot slot, Point2D screenPoint)
+    {
+        var runway = airport.Runways[runwayIndex];
+        var frame = ComputeRunwayFrame(airport, runway);
+        var (_, _, _, _, isPrimary) = GetVasiSlotData(runway, slot);
+        var threshold = isPrimary ? frame.Threshold1 : frame.Threshold2;
+        var inward = isPrimary ? frame.Forward : (X: -frame.Forward.X, Z: -frame.Forward.Z);
+
+        var local = ToLocalPoint(diagram, screenPoint);
+        var offsetX = local.X - threshold.X;
+        var offsetZ = local.Z - threshold.Z;
+
+        // forward/right are unit vectors, so a dot product directly gives
+        // the signed projection onto each axis.
+        var biasZ = offsetX * inward.X + offsetZ * inward.Z;
+        var biasX = offsetX * frame.Right.X + offsetZ * frame.Right.Z;
+
+        return (biasX, biasZ);
+    }
+
+    private static Point2D ToScreenPoint(AirportDiagram diagram, LocalPoint p) =>
+        new(p.X + diagram.OriginXMeters, diagram.OriginZMeters - p.Z);
+
+    private static LocalPoint ToLocalPoint(AirportDiagram diagram, Point2D p) =>
+        new(p.X - diagram.OriginXMeters, diagram.OriginZMeters - p.Y);
 
     // TaxiPathSegment only carries a TaxiNameId (a reference into
     // AirportDetails.TaxiNames, itself keyed by a stable Guid rather than
@@ -493,7 +643,8 @@ public static class AirportDiagramProjector
         List<RunwayWorkingData> runways,
         List<(TaxiPathSegment Segment, int SourceIndex, LocalPoint Start, LocalPoint End, LocalPoint[] WidthCorners, LocalPoint MidPoint)> taxiways,
         List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)> parkingSpots,
-        IEnumerable<LocalPoint> taxiwayPoints)
+        IEnumerable<LocalPoint> taxiwayPoints,
+        IEnumerable<LocalPoint> vasiPoints)
     {
         var points = new List<LocalPoint>();
 
@@ -542,6 +693,7 @@ public static class AirportDiagramProjector
         // it, rather than landing off-screen — see this method's caller for
         // why taxiwayPointsByIndex isn't filtered by path type.
         points.AddRange(taxiwayPoints);
+        points.AddRange(vasiPoints);
         foreach (var p in parkingSpots)
         {
             var radius = p.Spot.RadiusMeters;

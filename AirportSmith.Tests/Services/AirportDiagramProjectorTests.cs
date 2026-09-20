@@ -1,4 +1,5 @@
 using AirportSmith.Models;
+using AirportSmith.Models.Diagram;
 using AirportSmith.Services;
 
 namespace AirportSmith.Tests.Services;
@@ -740,5 +741,106 @@ public class AirportDiagramProjectorTests
         // AirportXmlExporter.BuildTaxiwayPoints).
         Assert.Single(diagram.TaxiwayPoints);
         Assert.Equal(0, diagram.TaxiwayPoints[0].Index);
+    }
+
+    [Fact]
+    public void Project_VasiLights_AlwaysFourSlotsPerRunway_OnlyInstalledOneMarkedInstalled()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            PrimaryDesignation = "09L",
+            SecondaryDesignation = "27R",
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryLeftVasiType = VasiType.Papi4,
+            PrimaryLeftVasiBiasXMeters = 10,
+            PrimaryLeftVasiBiasZMeters = 20,
+            PrimaryLeftVasiSpacingMeters = 5,
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.Equal(4, diagram.VasiLights.Count);
+        var primaryLeft = diagram.VasiLights.Single(v => v.SourceRunwayIndex == 0 && v.Slot == VasiSlot.PrimaryLeft);
+        Assert.True(primaryLeft.IsInstalled);
+        foreach (var other in diagram.VasiLights.Where(v => v.Slot != VasiSlot.PrimaryLeft))
+            Assert.False(other.IsInstalled);
+
+        // See Project_SingleRunway_ThresholdsAndCornersMatchHandCalculatedCoordinates
+        // for this fixture's derived OriginXMeters=100/OriginZMeters=550 and
+        // Threshold1 screen position (100, 1050) — PrimaryLeft is "inward"
+        // (+forward, i.e. toward Threshold2) from Threshold1 by BiasZ=20, and
+        // +right (screen +X here, HeadingDeg=0) by BiasX=10.
+        Assert.Equal(110, primaryLeft.Position.X, Precision);
+        Assert.Equal(1030, primaryLeft.Position.Y, Precision);
+        Assert.Equal(115, primaryLeft.WingBarStart.X, Precision);
+        Assert.Equal(1030, primaryLeft.WingBarStart.Y, Precision);
+        Assert.Equal(105, primaryLeft.WingBarEnd.X, Precision);
+        Assert.Equal(1030, primaryLeft.WingBarEnd.Y, Precision);
+
+        // An unset slot falls back to BiasX=BiasZ=0, i.e. exactly its own
+        // end's threshold.
+        var primaryRight = diagram.VasiLights.Single(v => v.SourceRunwayIndex == 0 && v.Slot == VasiSlot.PrimaryRight);
+        Assert.Equal(100, primaryRight.Position.X, Precision);
+        Assert.Equal(1050, primaryRight.Position.Y, Precision);
+        var secondaryLeft = diagram.VasiLights.Single(v => v.SourceRunwayIndex == 0 && v.Slot == VasiSlot.SecondaryLeft);
+        Assert.Equal(100, secondaryLeft.Position.X, Precision);
+        Assert.Equal(50, secondaryLeft.Position.Y, Precision);
+    }
+
+    [Fact]
+    public void ComputeVasiPlacement_MatchesProjectsOwnVasiLightsEntry()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            SecondaryRightVasiType = VasiType.Vasi31,
+            SecondaryRightVasiBiasXMeters = -8,
+            SecondaryRightVasiBiasZMeters = 15,
+            SecondaryRightVasiSpacingMeters = 3,
+        }));
+        var diagram = AirportDiagramProjector.Project(airport);
+        var expected = diagram.VasiLights.Single(v => v.Slot == VasiSlot.SecondaryRight);
+
+        var placement = AirportDiagramProjector.ComputeVasiPlacement(diagram, airport, 0, VasiSlot.SecondaryRight);
+
+        Assert.Equal(expected.Position, placement.Position);
+        Assert.Equal(expected.WingBarStart, placement.WingBarStart);
+        Assert.Equal(expected.WingBarEnd, placement.WingBarEnd);
+        Assert.True(placement.IsInstalled);
+    }
+
+    [Fact]
+    public void ComputeVasiBias_InvertsComputeVasiPlacementsPosition()
+    {
+        var airport = Airport(a => a.Runways.Add(new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+        }));
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        // No VASI installed yet on this runway/slot — click-to-place should
+        // still work purely from the click position, independent of whether
+        // a VASI is already there.
+        var clickedPosition = AirportDiagramProjector.ComputeVasiPlacement(diagram, airport, 0, VasiSlot.PrimaryLeft).Position;
+        var (biasX, biasZ) = AirportDiagramProjector.ComputeVasiBias(diagram, airport, 0, VasiSlot.PrimaryLeft, new Point2D(clickedPosition.X + 12, clickedPosition.Y - 7));
+
+        // clickedPosition here is exactly Threshold1 (no bias set) — moving
+        // +7 screen-Y up is -7 along Z, i.e. +7 "inward" (toward Threshold2)
+        // since screenY = OriginZ - localZ; +12 screen-X is +12 along the
+        // (unsigned) right axis at HeadingDeg=0.
+        Assert.Equal(12, biasX, Precision);
+        Assert.Equal(7, biasZ, Precision);
     }
 }

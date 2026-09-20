@@ -65,6 +65,24 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(TaxiwayPointClickCommandProperty, value);
     }
 
+    // Fired by a plain click (no drag) on empty diagram space, same as
+    // TaxiwayClearSelectionCommand — but only while MainViewModel has a VASI/
+    // PAPI slot armed for click-to-place (its CanExecute reflects that), in
+    // which case EndPan below tries this FIRST and only falls back to
+    // clearing the taxiway selection when nothing is armed. CommandParameter
+    // is the click position in the same untransformed canvas/diagram-space
+    // meters as every shape's own Point2D (see OnMouseWheel's anchor for the
+    // same GetPosition(DiagramCanvas) convention). Same Edit-tab-only
+    // null-guard convention as TaxiwayClickCommand.
+    public static readonly DependencyProperty VasiPlacementCommandProperty =
+        DependencyProperty.Register(nameof(VasiPlacementCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? VasiPlacementCommand
+    {
+        get => (ICommand?)GetValue(VasiPlacementCommandProperty);
+        set => SetValue(VasiPlacementCommandProperty, value);
+    }
+
     private const double ZoomStep = 1.15;
 
     // A mouse-down/mouse-up pair with less movement than this (device-
@@ -179,7 +197,18 @@ public partial class AirportDiagramView : UserControl
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
 
-        if (wasBackgroundClick && TaxiwayClearSelectionCommand?.CanExecute(null) == true)
+        if (!wasBackgroundClick) return;
+
+        // While a VASI/PAPI slot is armed for click-to-place, a background
+        // click places it there instead of clearing the taxiway selection —
+        // VasiPlacementCommand's CanExecute is false whenever nothing is
+        // armed, so this falls through to the ordinary clear-selection
+        // behavior the rest of the time.
+        var clickPoint = e!.GetPosition(DiagramCanvas);
+        var diagramPoint = new Point2D(clickPoint.X, clickPoint.Y);
+        if (VasiPlacementCommand?.CanExecute(diagramPoint) == true)
+            VasiPlacementCommand.Execute(diagramPoint);
+        else if (TaxiwayClearSelectionCommand?.CanExecute(null) == true)
             TaxiwayClearSelectionCommand.Execute(null);
     }
 

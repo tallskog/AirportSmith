@@ -1238,4 +1238,88 @@ public class MainViewModelTests
         Assert.False(vm.TaxiPathFilter.HasAnyFilter);
         Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
     }
+
+    private static AirportDetails BuildAirportForVasiPlacement()
+    {
+        var airport = new AirportDetails { Icao = "EFHK", Latitude = 0, Longitude = 0 };
+        airport.Runways.Add(new Runway
+        {
+            PrimaryDesignation = "09",
+            SecondaryDesignation = "27",
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+        });
+        return airport;
+    }
+
+    [Fact]
+    public void ArmVasiPlacementCommand_ArmsPlacementAndSetsStatusText()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportForVasiPlacement());
+
+        Assert.False(vm.IsVasiPlacementArmed);
+        Assert.Null(vm.VasiPlacementStatusText);
+
+        vm.ArmPrimaryLeftVasiPlacementCommand.Execute(vm.RunwayEdits[0]);
+
+        Assert.True(vm.IsVasiPlacementArmed);
+        Assert.Contains("09", vm.VasiPlacementStatusText);
+        Assert.Contains("27", vm.VasiPlacementStatusText);
+    }
+
+    [Fact]
+    public void PlaceVasiCommand_CanExecute_OnlyTrueWhilePlacementArmed()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportForVasiPlacement());
+
+        Assert.False(vm.PlaceVasiCommand.CanExecute(new Point2D(0, 0)));
+
+        vm.ArmPrimaryLeftVasiPlacementCommand.Execute(vm.RunwayEdits[0]);
+
+        Assert.True(vm.PlaceVasiCommand.CanExecute(new Point2D(0, 0)));
+    }
+
+    [Fact]
+    public void PlaceVasiCommand_WritesBiasIntoArmedSlot_UpdatesDiagramShape_AndDisarms()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportForVasiPlacement());
+        vm.ArmPrimaryLeftVasiPlacementCommand.Execute(vm.RunwayEdits[0]);
+
+        // Threshold1 (primary) for this fixture sits at screen (100, 1050) —
+        // see AirportDiagramProjectorTests' identical fixture. Clicking 20
+        // screen-px to the right and 30 above it should resolve to
+        // BiasX=20, BiasZ=30 (see ComputeVasiBias_InvertsComputeVasiPlacementsPosition).
+        vm.PlaceVasiCommand.Execute(new Point2D(120, 1020));
+
+        Assert.Equal(20, vm.RunwayEdits[0].PrimaryLeftVasiBiasXMeters);
+        Assert.Equal(30, vm.RunwayEdits[0].PrimaryLeftVasiBiasZMeters);
+
+        var shape = vm.Diagram!.VasiLights.Single(v => v.SourceRunwayIndex == 0 && v.Slot == VasiSlot.PrimaryLeft);
+        Assert.Equal(120, shape.Position.X, 3);
+        Assert.Equal(1020, shape.Position.Y, 3);
+
+        Assert.False(vm.IsVasiPlacementArmed);
+        Assert.Null(vm.VasiPlacementStatusText);
+    }
+
+    [Fact]
+    public void SettingVasiTypeThroughEditViewModel_MakesDiagramShapeInstalled()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportForVasiPlacement());
+        var shape = vm.Diagram!.VasiLights.Single(v => v.SourceRunwayIndex == 0 && v.Slot == VasiSlot.PrimaryRight);
+        Assert.False(shape.IsInstalled);
+
+        vm.RunwayEdits[0].PrimaryRightVasiType = VasiType.Papi4;
+
+        Assert.True(shape.IsInstalled);
+        // The Type setter's own default-position suggestion (BiasX=0,
+        // BiasZ=300 inward from Threshold1 at screen (100, 1050) — see
+        // AirportDiagramProjectorTests' identical fixture) should already be
+        // reflected on the diagram shape without any further action.
+        Assert.Equal(100, shape.Position.X, 3);
+        Assert.Equal(750, shape.Position.Y, 3);
+    }
 }

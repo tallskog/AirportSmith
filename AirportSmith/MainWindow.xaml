@@ -501,6 +501,18 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Pri L Angle" Width="70" Binding="{Binding PrimaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri L X" Width="55" Binding="{Binding PrimaryLeftVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri L Z" Width="55" Binding="{Binding PrimaryLeftVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri L Spacing" Width="60" Binding="{Binding PrimaryLeftVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Pri L Pos" Width="55">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Place"
+                                                Command="{Binding DataContext.ArmPrimaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="Pri R VASI" Width="90">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -510,6 +522,18 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Pri R Angle" Width="70" Binding="{Binding PrimaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri R X" Width="55" Binding="{Binding PrimaryRightVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri R Z" Width="55" Binding="{Binding PrimaryRightVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Pri R Spacing" Width="60" Binding="{Binding PrimaryRightVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Pri R Pos" Width="55">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Place"
+                                                Command="{Binding DataContext.ArmPrimaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="Sec L VASI" Width="90">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -519,6 +543,18 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Sec L Angle" Width="70" Binding="{Binding SecondaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec L X" Width="55" Binding="{Binding SecondaryLeftVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec L Z" Width="55" Binding="{Binding SecondaryLeftVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec L Spacing" Width="60" Binding="{Binding SecondaryLeftVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Sec L Pos" Width="55">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Place"
+                                                Command="{Binding DataContext.ArmSecondaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="Sec R VASI" Width="90">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -528,6 +564,18 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Sec R Angle" Width="70" Binding="{Binding SecondaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec R X" Width="55" Binding="{Binding SecondaryRightVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec R Z" Width="55" Binding="{Binding SecondaryRightVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="Sec R Spacing" Width="60" Binding="{Binding SecondaryRightVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTemplateColumn Header="Sec R Pos" Width="55">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Place"
+                                                Command="{Binding DataContext.ArmSecondaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="Pri Approach Lights" Width="130">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -555,7 +603,18 @@
                             TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayClearSelectionCommand="{Binding DataContext.ClearTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                            TaxiwayPointClickCommand="{Binding DataContext.ToggleTaxiwayPointSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            TaxiwayPointClickCommand="{Binding DataContext.ToggleTaxiwayPointSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            VasiPlacementCommand="{Binding DataContext.PlaceVasiCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+                        <!-- Shown only while a VASI/PAPI slot is armed for click-to-place
+                             (see MainViewModel.VasiPlacementStatusText/ArmVasiPlacementCommand
+                             family) — otherwise a silent "next click sets a value" mode would
+                             be easy to forget mid-session. -->
+                        <Border Background="#CC000000" CornerRadius="4" Padding="8,4"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0"
+                                Visibility="{Binding DataContext.IsVasiPlacementArmed, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding DataContext.VasiPlacementStatusText, RelativeSource={RelativeSource AncestorType=Window}}" Foreground="White"/>
+                        </Border>
 
                         <!-- Batch-edit popover for the diagram's multi-select — DataContext is
                              bound directly on the Popup element itself (not inside its Child),

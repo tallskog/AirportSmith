@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using AirportSmith.Models;
 
 namespace AirportSmith.Models.Diagram;
 
@@ -246,6 +247,57 @@ public class TaxiwayPointShape : INotifyPropertyChanged
 // see that record's own doc comment for ExtendSelection's meaning.
 public sealed record TaxiwayPointSelectionRequest(TaxiwayPointShape Shape, bool ExtendSelection);
 
+// One of a runway's four VASI/PAPI slots (VasiSlot.PrimaryLeft/Right,
+// SecondaryLeft/Right) — unlike TaxiwaySegments/TaxiwayPoints (which only
+// exist for what the airport actually has), AirportDiagramProjector.Project
+// always creates exactly one VasiShape per slot per runway, and IsInstalled
+// (that slot's Runway.*VasiType != null) drives whether it's drawn. That way
+// enabling a VASI purely through the Edit tab's Type picker (no reload) just
+// flips an existing shape visible instead of needing one created on the fly
+// — the same "pre-create, then mutate" approach TaxiwaySegmentShape/
+// TaxiwayPointShape use for their own live-without-re-projecting updates.
+// Position/WingBarStart/WingBarEnd are screen-space (via
+// AirportDiagramProjector.ComputeVasiPlacement, which converts the slot's
+// runway-relative Bias X/Z into this same screen space using
+// AirportDiagram's OriginXMeters/OriginZMeters below) and mutable so
+// MainViewModel can push a recomputed position straight onto the shape
+// whenever the Edit tab's Bias X/Z/Spacing fields change, or a diagram click
+// sets them via click-to-place — re-running the whole projection on every
+// edit would reset zoom/pan/selection, same rationale as every other
+// mutable shape in this file.
+public class VasiShape : INotifyPropertyChanged
+{
+    public required int SourceRunwayIndex { get; init; }
+    public required VasiSlot Slot { get; init; }
+
+    private Point2D _position;
+    public Point2D Position { get => _position; set => SetField(ref _position, value); }
+
+    // Endpoints of a short bar drawn perpendicular to the runway centerline
+    // through Position, sized from SpacingMeters — a diagram-level schematic
+    // (not a literal per-light-unit reproduction of PAPI's 2/4 lights or
+    // VASI's near/far bars), same simplification precedent as
+    // ApproachLightSystemShape's bucketed rail.
+    private Point2D _wingBarStart;
+    public Point2D WingBarStart { get => _wingBarStart; set => SetField(ref _wingBarStart, value); }
+
+    private Point2D _wingBarEnd;
+    public Point2D WingBarEnd { get => _wingBarEnd; set => SetField(ref _wingBarEnd, value); }
+
+    private bool _isInstalled;
+    public bool IsInstalled { get => _isInstalled; set => SetField(ref _isInstalled, value); }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
+    }
+}
+
 public class AirportDiagram
 {
     public double CanvasWidth { get; init; }
@@ -254,4 +306,19 @@ public class AirportDiagram
     public List<TaxiwaySegmentShape> TaxiwaySegments { get; init; } = [];
     public List<ParkingSpotShape> ParkingSpots { get; init; } = [];
     public List<TaxiwayPointShape> TaxiwayPoints { get; init; } = [];
+    public List<VasiShape> VasiLights { get; init; } = [];
+
+    // Local-meters -> screen-space offsets captured from this projection's
+    // own bounds (see AirportDiagramProjector.Project's ToScreen local
+    // function: screenX = localX - minX + margin, screenY = maxZ - localZ +
+    // margin — OriginXMeters/OriginZMeters below are just margin-minX and
+    // maxZ+margin, so screenX = localX + OriginXMeters and
+    // screenY = OriginZMeters - localZ). Needed so
+    // AirportDiagramProjector.ComputeVasiPlacement/ComputeVasiBias can
+    // convert a VASI/PAPI's runway-relative Bias X/Z into/out of this same
+    // screen space AFTER the initial projection (a live Edit tab field
+    // change, or a diagram click while placing), without re-running the
+    // whole projection.
+    public double OriginXMeters { get; init; }
+    public double OriginZMeters { get; init; }
 }
