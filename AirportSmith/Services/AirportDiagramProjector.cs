@@ -367,12 +367,19 @@ public static class AirportDiagramProjector
         // diagram (see requirements.md's open RUNWAY-type-path investigation)
         // if it's shown regardless of which path type resolved it.
         var taxiwayPointsByIndex = new Dictionary<int, LocalPoint>();
+        var holdShortByIndex = new Dictionary<int, bool>();
         foreach (var segment in airport.TaxiPaths)
         {
             if (segment.StartXMeters is { } sx && segment.StartZMeters is { } sz)
+            {
                 taxiwayPointsByIndex.TryAdd(segment.StartIndex, new LocalPoint(sx, sz));
+                holdShortByIndex.TryAdd(segment.StartIndex, IsHoldShort(segment.StartPointType));
+            }
             if (segment.Type != TaxiPathType.Parking && segment.EndXMeters is { } ex && segment.EndZMeters is { } ez)
+            {
                 taxiwayPointsByIndex.TryAdd(segment.EndIndex, new LocalPoint(ex, ez));
+                holdShortByIndex.TryAdd(segment.EndIndex, IsHoldShort(segment.EndPointType));
+            }
         }
 
         var parkingSpots = new List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)>();
@@ -456,7 +463,12 @@ public static class AirportDiagramProjector
                 ToScreen(p.HeadingTip))).ToList(),
             TaxiwayPoints = taxiwayPointsByIndex
                 .OrderBy(kvp => kvp.Key)
-                .Select(kvp => new TaxiwayPointShape { Center = ToScreen(kvp.Value), Index = kvp.Key })
+                .Select(kvp => new TaxiwayPointShape
+                {
+                    Center = ToScreen(kvp.Value),
+                    Index = kvp.Key,
+                    IsHoldShort = holdShortByIndex.GetValueOrDefault(kvp.Key),
+                })
                 .ToList(),
         };
     }
@@ -469,6 +481,13 @@ public static class AirportDiagramProjector
     // enum-backed fields that render fine on their own.
     private static string ResolveTaxiName(AirportDetails airport, Guid? taxiNameId) =>
         taxiNameId is { } id ? airport.TaxiNames.FirstOrDefault(n => n.Id == id)?.Value ?? string.Empty : string.Empty;
+
+    // True for any of TaxiPointType's four hold-short variants; false for
+    // Normal and for null (unresolved/TYPE 0 — see TaxiPathSegment's own
+    // StartPointType/EndPointType doc comment).
+    private static bool IsHoldShort(TaxiPointType? type) => type is
+        TaxiPointType.HoldShort or TaxiPointType.IlsHoldShort or
+        TaxiPointType.HoldShortNoDraw or TaxiPointType.IlsHoldShortNoDraw;
 
     private static (double MinX, double MaxX, double MinZ, double MaxZ) ComputeBounds(
         List<RunwayWorkingData> runways,

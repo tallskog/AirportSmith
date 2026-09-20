@@ -294,6 +294,14 @@
                                 <Style TargetType="Path">
                                     <Setter Property="Fill" Value="Red"/>
                                     <Style.Triggers>
+                                        <!-- TaxiPointType.HoldShort/IlsHoldShort/*NoDraw variants (see
+                                             AirportDiagramProjector.IsHoldShort) — a distinct color from
+                                             ordinary Red taxi points, checked before IsSelected below so
+                                             a selected hold-short point still shows the selection color. -->
+                                        <DataTrigger Binding="{Binding IsHoldShort}" Value="True">
+                                            <Setter Property="Fill" Value="Yellow"/>
+                                            <Setter Property="Stroke" Value="Goldenrod"/>
+                                        </DataTrigger>
                                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                             <Setter Property="Fill" Value="Orange"/>
                                             <Setter Property="Stroke" Value="DarkOrange"/>

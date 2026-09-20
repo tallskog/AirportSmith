@@ -967,7 +967,7 @@ watermark itself still reaches the `TextBox` underneath.
   editable Type/Orientation pickers that write through to every taxi path
   segment sharing that point (keeping them consistent, unlike the raw
   per-segment fields which could otherwise disagree). The same points are
-  drawn as small red dots on both diagrams (`AirportDiagramProjector`'s
+  drawn as small dots on both diagrams (`AirportDiagramProjector`'s
   `TaxiwayPoints`, rendered by `AirportDiagramView`'s dedicated
   `ItemsControl`, positioned via a `Path`+`EllipseGeometry` with an absolute
   `Center` rather than `Canvas.Left`/`Top` on the template root like every
@@ -979,7 +979,20 @@ watermark itself still reaches the `TextBox` underneath.
   — deliberately not filtered to Taxi/Path-typed paths like `TaxiwaySegments`
   is, so a `Runway`-type path's points are visible too (see this epic's
   earlier note on `Runway`-typed rows having no other way to be visually
-  sanity-checked on the diagram).
+  sanity-checked on the diagram). Points resolve to one of two colors: **red**
+  for `TaxiPointType.Normal`/unresolved, **yellow** for any of the four
+  hold-short variants (`HoldShort`/`IlsHoldShort`/`HoldShortNoDraw`/
+  `IlsHoldShortNoDraw`) — `TaxiwayPointShape.IsHoldShort`, set by
+  `AirportDiagramProjector.Project` from whichever segment's
+  `StartPointType`/`EndPointType` first resolved that index (same first-wins
+  dictionary as the point's own screen position). Selection's orange
+  highlight still overrides both colors (`AirportDiagramView`'s `IsSelected`
+  `DataTrigger` is evaluated after `IsHoldShort`'s). Covered by
+  `AirportDiagramProjectorTests`
+  (`Project_TaxiwayPoints_HoldShortVariant_SetsIsHoldShort`,
+  `Project_TaxiwayPoints_NullOrNormalPointType_IsNotHoldShort`); the color
+  mapping itself is WPF `DataTrigger` styling, verified manually per this
+  file's testing conventions, not by an automated test.
   - A single **Hide All from Diagram** checkbox next to the grid header (not
     a per-row checkbox like taxiways/runways — there can be hundreds of
     points, so per-row would be impractical) toggles every point's

@@ -641,6 +641,54 @@ public class AirportDiagramProjectorTests
         Assert.Equal(100, diagram.TaxiwayPoints[1].Center.Y, Precision);
     }
 
+    [Theory]
+    [InlineData(TaxiPointType.HoldShort)]
+    [InlineData(TaxiPointType.IlsHoldShort)]
+    [InlineData(TaxiPointType.HoldShortNoDraw)]
+    [InlineData(TaxiPointType.IlsHoldShortNoDraw)]
+    public void Project_TaxiwayPoints_HoldShortVariant_SetsIsHoldShort(TaxiPointType type)
+    {
+        var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi,
+            StartIndex = 0,
+            EndIndex = 1,
+            StartXMeters = 0,
+            StartZMeters = 0,
+            EndXMeters = 200,
+            EndZMeters = 0,
+            StartPointType = type,
+            EndPointType = TaxiPointType.Normal,
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.True(diagram.TaxiwayPoints[0].IsHoldShort);
+        Assert.False(diagram.TaxiwayPoints[1].IsHoldShort);
+    }
+
+    [Fact]
+    public void Project_TaxiwayPoints_NullOrNormalPointType_IsNotHoldShort()
+    {
+        var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi,
+            StartIndex = 0,
+            EndIndex = 1,
+            StartXMeters = 0,
+            StartZMeters = 0,
+            EndXMeters = 200,
+            EndZMeters = 0,
+            StartPointType = null,
+            EndPointType = TaxiPointType.Normal,
+        }));
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.False(diagram.TaxiwayPoints[0].IsHoldShort);
+        Assert.False(diagram.TaxiwayPoints[1].IsHoldShort);
+    }
+
     [Fact]
     public void Project_TaxiwayPoints_ClosedTypePath_StillIncluded_UnlikeTaxiwaySegments()
     {

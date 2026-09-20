@@ -210,6 +210,13 @@ public class TaxiwayPointShape : INotifyPropertyChanged
     public required Point2D Center { get; init; }
     public required int Index { get; init; }
 
+    // True when this index's resolved TaxiPointType (from whichever
+    // TaxiPathSegment.StartPointType/EndPointType referenced it first — see
+    // AirportDiagramProjector.Project) is one of the four hold-short variants
+    // rather than Normal/unresolved, so the diagram can render it in a
+    // distinct color instead of looking identical to an ordinary taxi point.
+    public required bool IsHoldShort { get; init; }
+
     private bool _isSelected;
     public bool IsSelected
     {
