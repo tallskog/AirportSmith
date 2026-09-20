@@ -1112,6 +1112,91 @@ warning (see `AirportXmlExporter.AddVasi`).
   handling — verified manually; the underlying geometry (position math and
   its exact inverse) is fully unit-tested per the bullets above.
 
+### Amendment: parking spot diagram rendering, selection, and editing
+
+**User story:** As a user, I can clearly see every parking spot on the
+diagram, click one to find its data, and change it — its number, type,
+name/suffix, heading, radius, and position (by typing numbers or by
+clicking a new spot on the diagram) — with the diagram updating as I edit.
+
+Before this, parking spots were drawn on the diagram but with a 1-unit
+outline and a 20%-alpha fill, which fell below a device pixel at fit-to-view
+zoom on any real airport (the same problem the approach-light rail and
+taxiway points already had to solve) — so they were effectively invisible —
+and the Edit tab had no way to change them at all (the read-only **Parking**
+tab was the only place they appeared).
+
+- `ParkingSpotShape` is now a mutable, observable class (was an immutable
+  record) with `SourceIndex` (its index into `AirportDetails.ParkingSpots`),
+  `Label` (the spot's `Number`), `IsSelected` and `IsVisible` — mutable for
+  the same "update live without re-projecting (which would reset
+  zoom/pan/selection)" reason as `VasiShape`/`TaxiwayPointShape`. Rendering:
+  a fairly opaque orange circle sized from the spot's real `RadiusMeters`, a
+  thick heading line, and the number as a label; a selected spot turns blue
+  (distinct from the orange taxiway selection). Applies to both the read-only
+  Diagram tab and the Edit tab's diagram.
+- New **Parking Spots** grid in the Edit tab (`ParkingSpotEditViewModel`,
+  one row per spot, same order as `Airport.ParkingSpots`): read-only `Index`
+  (the sim's `TAXI_PARKING` ItemIndex, which Parking-type taxi paths
+  reference), and editable `Number`, `Type`/`Name`/`Suffix` pickers (the
+  SDK's enumerated codes, labelled from the same tables the Airport Data tab
+  and XML exporter use — `Suffix` offers only NONE and GATE_A..GATE_Z since
+  those are the only values `AirportXmlExporter.MapParkingSuffix` can
+  export), `Heading`, `Radius`, and `X`/`Z` (`BiasXMeters`/`BiasZMeters`).
+  Edits write straight into the loaded `Airport` (persisted by Save Project
+  and carried into Export Airport XML with no further changes — the model
+  and its JSON shape are unchanged).
+- Editing `Number`/`Heading`/`Radius`/`X`/`Z` immediately updates just the
+  matching `ParkingSpotShape` (`MainViewModel.RefreshParkingShape` →
+  `AirportDiagramProjector.ComputeParkingPlacement`); `Type`/`Name`/`Suffix`
+  don't affect what's drawn.
+- Moving a spot (`X`/`Z`) also updates `EndXMeters`/`EndZMeters` on every
+  `Type == Parking` taxi path whose `EndIndex` references it, matching what
+  the extractor originally copied there — so the airport data never
+  disagrees with itself. Only done when the spot's `ItemIndex` is unique
+  among the airport's spots: a project saved before `ItemIndex` existed has
+  every spot at `0`, where matching would wrongly drag unrelated paths
+  along. Non-Parking-type paths with the same `EndIndex` value (a taxi
+  point, not a spot) are never touched.
+- Clicking a spot on the Edit tab's diagram selects it (Ctrl+click extends)
+  and filters the Parking Spots grid to just the selected row(s) — an
+  independent selection from taxiways/taxiway points; a click on empty
+  diagram space clears all three. A **Hide All from Diagram** checkbox
+  (display-only, never saved, resets on airport load) hides every spot at
+  once, like the Taxiway Points grid's — there can be hundreds.
+- Each row's **Place** button arms click-to-place, same idea as the VASI/PAPI
+  Place buttons: a banner names the spot, and the next click on empty
+  diagram space (or on another spot — while armed, spot clicks fall through
+  as placement clicks) sets its X/Z there via
+  `AirportDiagramProjector.ComputeParkingBias`, the inverse of the
+  placement math. Only one of VASI/PAPI placement and parking placement can
+  be armed at once (arming either disarms the other), and loading another
+  airport disarms both.
+- **Deliberately out of scope:** adding or deleting parking spots (a new
+  spot would need a fresh sim-unique `ItemIndex` and taxi-path linkage — a
+  separate feature), and dragging a spot with the mouse (Place-by-click is
+  used instead, consistent with VASI/PAPI, and avoids competing with
+  pan-drag). `BIAS_X`/`BIAS_Z`'s axis convention remains **UNCONFIRMED
+  against a live sim** (same caveat as everywhere else in the Diagram
+  epic) — this feature inherits it rather than resolving it.
+- **Backwards compatibility:** no persisted field was added, removed, or
+  reinterpreted (`TaxiParkingSpot` is unchanged), so a project file written
+  by any earlier version loads exactly as before.
+- Test coverage: `AirportDiagramProjectorTests.Project_ParkingSpots_SourceIndexMatchesListPosition_AndLabelIsNumber`/
+  `ComputeParkingPlacement_AfterEditingSpot_MatchesWhatProjectWouldHaveProduced`/
+  `ComputeParkingBias_InvertsComputeParkingPlacementsCenter`;
+  `ParkingSpotEditViewModelTests` (write-through, change notification only on
+  real changes, taxi-path End coordinate sync incl. the non-unique-ItemIndex
+  and non-Parking-path guards, picker contents); `MainViewModelTests`
+  (`ParkingSpotEdits_*`, `ToggleParkingSpotSelection_*`,
+  `ClearTaxiwaySelection_AlsoClearsParkingSelection_*`,
+  `EditingParkingSpot*`, `HideAllParkingSpots_*`, `ArmParkingPlacementCommand_*`,
+  `PlaceParkingCommand_*`, `ArmingParkingAndVasiPlacement_AreMutuallyExclusive`,
+  `LoadingAnotherAirport_DisarmsParkingPlacement_AndResetsHideAll`). The
+  visual rendering, real mouse input (click-select, Place), and the grid's
+  ComboBox/edit behavior are not covered by automated tests — verified
+  manually.
+
 ## v0.1+ — Generate SDK-compatible `<Airport>` XML
 
 **User story:** As a user, after loading and editing an airport, I can click
@@ -1552,6 +1637,8 @@ Investigated directly against the real OIBK debug JSON and exported XML:
 These are draft candidates surfaced by the research above, not approved user stories. Each needs to be broken into concrete acceptance criteria once prioritized.
 
 1. **Edit runway geometry/taxiway routing/parking data.** UI to modify runway surface/length, taxiway routing, and parking spot type/heading/radius. Taxi path naming/lighting and runway lighting (edge lights, VASI/PAPI, approach lights) are already committed above — this covers the rest of the original "Edit runway/taxiway/parking data" idea.
+   - **Follow-up: add/delete parking spots.** Deliberately left out of the parking spot editing amendment above. Adding needs new sim-unique `ItemIndex` values and taxi-path linking (a Parking-type path's `EndIndex` references a spot's `ItemIndex`), so it's a separate feature.
+   - **Follow-up: drag a parking spot with the mouse.** Also left out — Place-by-click is used instead, consistent with VASI/PAPI, and avoids competing with pan-drag.
 2. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
 
 ## Test coverage

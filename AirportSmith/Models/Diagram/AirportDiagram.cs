@@ -189,7 +189,51 @@ public class TaxiwaySegmentShape : INotifyPropertyChanged
 // System.Windows.Input.
 public sealed record TaxiwaySelectionRequest(TaxiwaySegmentShape Shape, bool ExtendSelection);
 
-public record ParkingSpotShape(Point2D Center, double RadiusMeters, Point2D HeadingTip);
+// One TAXI_PARKING spot. SourceIndex is this shape's index into
+// AirportDetails.ParkingSpots (which is also its row's position in
+// MainViewModel.ParkingSpotEdits — both are built 1:1 in the same order), so a
+// clicked shape maps straight back to its Edit tab row. A mutable class (not a
+// record) for the same reason as TaxiwaySegmentShape/VasiShape: Center/
+// HeadingTip/RadiusMeters/Label change live when the Edit tab's grid fields
+// change or a diagram click places the spot, and IsSelected/IsVisible back the
+// click-to-select highlight and the "hide all" toggle — none of which should
+// need to re-run the whole projection (that would reset zoom/pan/selection).
+// Label is the spot's user-facing Number.
+public class ParkingSpotShape : INotifyPropertyChanged
+{
+    public required int SourceIndex { get; init; }
+
+    private Point2D _center;
+    public required Point2D Center { get => _center; set => SetField(ref _center, value); }
+
+    private double _radiusMeters;
+    public required double RadiusMeters { get => _radiusMeters; set => SetField(ref _radiusMeters, value); }
+
+    private Point2D _headingTip;
+    public required Point2D HeadingTip { get => _headingTip; set => SetField(ref _headingTip, value); }
+
+    private string _label = string.Empty;
+    public string Label { get => _label; set => SetField(ref _label, value); }
+
+    private bool _isSelected;
+    public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }
+
+    private bool _isVisible = true;
+    public bool IsVisible { get => _isVisible; set => SetField(ref _isVisible, value); }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
+    }
+}
+
+// Same idea as TaxiwayPointSelectionRequest, for a click on a ParkingSpotShape.
+public sealed record ParkingSpotSelectionRequest(ParkingSpotShape Shape, bool ExtendSelection);
 
 // One distinct sim TAXI_POINT index, resolved from the airport's taxi paths —
 // the same distinct-index synthesis AirportXmlExporter.BuildTaxiwayPoints

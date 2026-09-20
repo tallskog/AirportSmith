@@ -143,6 +143,63 @@ public class MainViewModel : ViewModelBase
         private set => SetField(ref _visibleTaxiwayPointEdits, value);
     }
 
+    // Editable per-spot wrappers for the Edit tab's Parking grid, built 1:1
+    // (same order) from Airport.ParkingSpots — so a ParkingSpotShape's
+    // SourceIndex is also its row's index here, no lookup needed. Edits write
+    // straight into Airport, and OnParkingSpotEditChanged pushes the new
+    // geometry onto the matching diagram shape.
+    private IReadOnlyList<ParkingSpotEditViewModel> _parkingSpotEdits = [];
+    public IReadOnlyList<ParkingSpotEditViewModel> ParkingSpotEdits
+    {
+        get => _parkingSpotEdits;
+        private set => SetField(ref _parkingSpotEdits, value);
+    }
+
+    // What the Parking grid actually displays — every spot when none is
+    // selected on the Edit tab's diagram, or just the selected one(s) (see
+    // RefreshParkingSpotFilter). Same "click a shape, see just that shape's
+    // data" pattern as VisibleTaxiwayPointEdits, as an independent selection.
+    private IReadOnlyList<ParkingSpotEditViewModel> _visibleParkingSpotEdits = [];
+    public IReadOnlyList<ParkingSpotEditViewModel> VisibleParkingSpotEdits
+    {
+        get => _visibleParkingSpotEdits;
+        private set => SetField(ref _visibleParkingSpotEdits, value);
+    }
+
+    // Same all-or-nothing display-only toggle as HideAllTaxiwayPoints, for the
+    // same reason (an airport can have hundreds of spots, so a per-row
+    // checkbox would be impractical for decluttering) — never persisted,
+    // never touches Airport, and hiding also clears any parking selection.
+    private bool _hideAllParkingSpots;
+    public bool HideAllParkingSpots
+    {
+        get => _hideAllParkingSpots;
+        set
+        {
+            if (!SetField(ref _hideAllParkingSpots, value)) return;
+            if (Diagram is null) return;
+
+            foreach (var shape in Diagram.ParkingSpots)
+            {
+                shape.IsVisible = !value;
+                if (value) shape.IsSelected = false;
+            }
+            RefreshParkingSpotFilter();
+        }
+    }
+
+    // Set by ArmParkingPlacementCommand (a per-row "Place" button in the
+    // Parking grid) and consumed by PlaceParkingCommand, which the diagram's
+    // next background click fires — same click-to-place idea as
+    // _armedVasiPlacement below. At most one of the two is ever armed: arming
+    // either disarms the other, since a single background click can only
+    // place one thing.
+    private ParkingSpotEditViewModel? _armedParkingPlacement;
+    public bool IsParkingPlacementArmed => _armedParkingPlacement != null;
+    public string? ParkingPlacementStatusText => _armedParkingPlacement is { } armed
+        ? $"Click the diagram to place parking spot {armed.Number}"
+        : null;
+
     // A single all-or-nothing toggle for the Taxiway Points grid's "Hide All
     // from Diagram" checkbox — unlike TaxiPathEdits/RunwayEdits, individual
     // points have no per-row Edit tab checkbox of their own to hide just one,
@@ -322,6 +379,9 @@ public class MainViewModel : ViewModelBase
     public RelayCommand<RunwayEditViewModel> ArmSecondaryLeftVasiPlacementCommand { get; }
     public RelayCommand<RunwayEditViewModel> ArmSecondaryRightVasiPlacementCommand { get; }
     public RelayCommand<Point2D> PlaceVasiCommand { get; }
+    public RelayCommand<ParkingSpotSelectionRequest> ToggleParkingSpotSelectionCommand { get; }
+    public RelayCommand<ParkingSpotEditViewModel> ArmParkingPlacementCommand { get; }
+    public RelayCommand<Point2D> PlaceParkingCommand { get; }
 
     public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null)
     {
@@ -352,6 +412,9 @@ public class MainViewModel : ViewModelBase
         ArmSecondaryLeftVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.SecondaryLeft), edit => edit != null);
         ArmSecondaryRightVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.SecondaryRight), edit => edit != null);
         PlaceVasiCommand = new RelayCommand<Point2D>(PlaceVasi, _ => _armedVasiPlacement != null);
+        ToggleParkingSpotSelectionCommand = new RelayCommand<ParkingSpotSelectionRequest>(ToggleParkingSpotSelection, request => request != null);
+        ArmParkingPlacementCommand = new RelayCommand<ParkingSpotEditViewModel>(ArmParkingPlacement, edit => edit != null);
+        PlaceParkingCommand = new RelayCommand<Point2D>(PlaceParking, _ => _armedParkingPlacement != null);
         // A single long-lived object (unlike TaxiwayBatchEdit, which is
         // reset per selection, not per subscription) — subscribed once here
         // rather than per-SetAirport, so a filter typed before an airport is
@@ -374,6 +437,7 @@ public class MainViewModel : ViewModelBase
         UnsubscribeTaxiPathEdits();
         UnsubscribeTaxiNames();
         UnsubscribeRunwayEdits();
+        UnsubscribeParkingSpotEdits();
 
         Airport = airport;
         Diagram = airport != null ? AirportDiagramProjector.Project(airport) : null;
@@ -381,21 +445,33 @@ public class MainViewModel : ViewModelBase
         TaxiPathEdits = airport != null ? airport.TaxiPaths.Select(t => new TaxiPathEditViewModel(t)).ToList() : [];
         RunwayEdits = airport != null ? airport.Runways.Select(r => new RunwayEditViewModel(r)).ToList() : [];
         TaxiwayPointEdits = airport != null ? TaxiwayPointEditViewModel.BuildAll(airport) : [];
+        ParkingSpotEdits = airport != null ? ParkingSpotEditViewModel.BuildAll(airport) : [];
 
         // Bypasses the HideAllTaxiwayPoints setter's apply-to-diagram side
         // effect: a freshly projected Diagram's TaxiwayPoints already default
         // to IsVisible=true, so there's nothing to "un-hide" here — this just
         // resets the checkbox itself back to unchecked for the new airport.
+        // Same for HideAllParkingSpots.
         if (_hideAllTaxiwayPoints)
         {
             _hideAllTaxiwayPoints = false;
             OnPropertyChanged(nameof(HideAllTaxiwayPoints));
+        }
+        if (_hideAllParkingSpots)
+        {
+            _hideAllParkingSpots = false;
+            OnPropertyChanged(nameof(HideAllParkingSpots));
         }
 
         if (_armedVasiPlacement != null)
         {
             _armedVasiPlacement = null;
             RaiseVasiPlacementChanged();
+        }
+        if (_armedParkingPlacement != null)
+        {
+            _armedParkingPlacement = null;
+            RaiseParkingPlacementChanged();
         }
 
         TaxiNames.Clear();
@@ -407,6 +483,7 @@ public class MainViewModel : ViewModelBase
         SubscribeTaxiPathEdits();
         SubscribeTaxiNames();
         SubscribeRunwayEdits();
+        SubscribeParkingSpotEdits();
         RefreshTaxiwaySelectionState();
         // A new airport starts with every Taxi Paths column filter cleared —
         // a filter value typed against the previous airport (e.g. a taxi
@@ -415,10 +492,130 @@ public class MainViewModel : ViewModelBase
         TaxiPathFilter.Reset();
         RefreshTaxiwayFilter();
         RefreshTaxiwayPointFilter();
+        RefreshParkingSpotFilter();
         SaveProjectCommand.RaiseCanExecuteChanged();
         ExportXmlCommand.RaiseCanExecuteChanged();
         AddTaxiNameCommand.RaiseCanExecuteChanged();
         ClearTaxiwaySelectionCommand.RaiseCanExecuteChanged();
+        PlaceVasiCommand.RaiseCanExecuteChanged();
+        PlaceParkingCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SubscribeParkingSpotEdits()
+    {
+        foreach (var edit in ParkingSpotEdits)
+            edit.PropertyChanged += OnParkingSpotEditChanged;
+    }
+
+    private void UnsubscribeParkingSpotEdits()
+    {
+        foreach (var edit in ParkingSpotEdits)
+            edit.PropertyChanged -= OnParkingSpotEditChanged;
+    }
+
+    // Number (label text), Heading (tip), Radius (size + tip distance) and
+    // Bias X/Z (position) all affect what's drawn; Type/Name/Suffix don't.
+    private void OnParkingSpotEditChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        var affectsDiagram = e.PropertyName is nameof(ParkingSpotEditViewModel.Number) or nameof(ParkingSpotEditViewModel.HeadingDeg)
+            or nameof(ParkingSpotEditViewModel.RadiusMeters) or nameof(ParkingSpotEditViewModel.BiasXMeters)
+            or nameof(ParkingSpotEditViewModel.BiasZMeters);
+        if (affectsDiagram && sender is ParkingSpotEditViewModel edit)
+            RefreshParkingShape(edit);
+    }
+
+    // Pushes recomputed geometry straight onto the one ParkingSpotShape this
+    // edit corresponds to instead of re-running the whole projection — see
+    // ParkingSpotShape's own doc comment for why (would reset zoom/pan/
+    // selection).
+    private void RefreshParkingShape(ParkingSpotEditViewModel edit)
+    {
+        if (Diagram is null || Airport is null) return;
+        var index = IndexOfParkingSpotEdit(edit);
+        if (index < 0 || index >= Diagram.ParkingSpots.Count) return;
+
+        var shape = Diagram.ParkingSpots[index];
+        var (center, tip) = AirportDiagramProjector.ComputeParkingPlacement(Diagram, Airport.ParkingSpots[index]);
+        shape.Center = center;
+        shape.HeadingTip = tip;
+        shape.RadiusMeters = edit.RadiusMeters;
+        shape.Label = edit.Number.ToString();
+    }
+
+    private int IndexOfParkingSpotEdit(ParkingSpotEditViewModel edit)
+    {
+        for (var i = 0; i < ParkingSpotEdits.Count; i++)
+            if (ReferenceEquals(ParkingSpotEdits[i], edit)) return i;
+        return -1;
+    }
+
+    // Same click-to-select/Ctrl+click-to-extend pattern as
+    // ToggleTaxiwayPointSelection, as its own independent selection.
+    private void ToggleParkingSpotSelection(ParkingSpotSelectionRequest? request)
+    {
+        if (request is null || Diagram is null) return;
+
+        if (!request.ExtendSelection)
+        {
+            foreach (var shape in Diagram.ParkingSpots)
+                if (!ReferenceEquals(shape, request.Shape))
+                    shape.IsSelected = false;
+            request.Shape.IsSelected = true;
+        }
+        else
+        {
+            request.Shape.IsSelected = !request.Shape.IsSelected;
+        }
+
+        RefreshParkingSpotFilter();
+    }
+
+    // Matched by list position (ParkingSpotShape.SourceIndex == index into
+    // ParkingSpotEdits) — see ParkingSpotEdits.
+    private void RefreshParkingSpotFilter()
+    {
+        if (Diagram is null)
+        {
+            VisibleParkingSpotEdits = ParkingSpotEdits;
+            return;
+        }
+
+        var selectedIndexes = Diagram.ParkingSpots.Where(p => p.IsSelected).Select(p => p.SourceIndex).ToHashSet();
+        VisibleParkingSpotEdits = selectedIndexes.Count == 0
+            ? ParkingSpotEdits
+            : ParkingSpotEdits.Where((_, i) => selectedIndexes.Contains(i)).ToList();
+    }
+
+    private void ArmParkingPlacement(ParkingSpotEditViewModel? edit)
+    {
+        if (edit is null || IndexOfParkingSpotEdit(edit) < 0) return;
+
+        _armedVasiPlacement = null;
+        RaiseVasiPlacementChanged();
+        PlaceVasiCommand.RaiseCanExecuteChanged();
+
+        _armedParkingPlacement = edit;
+        RaiseParkingPlacementChanged();
+        PlaceParkingCommand.RaiseCanExecuteChanged();
+    }
+
+    private void PlaceParking(Point2D point)
+    {
+        if (_armedParkingPlacement is not { } armed || Diagram is null) return;
+
+        var (biasX, biasZ) = AirportDiagramProjector.ComputeParkingBias(Diagram, point);
+        armed.BiasXMeters = biasX;
+        armed.BiasZMeters = biasZ;
+
+        _armedParkingPlacement = null;
+        RaiseParkingPlacementChanged();
+        PlaceParkingCommand.RaiseCanExecuteChanged();
+    }
+
+    private void RaiseParkingPlacementChanged()
+    {
+        OnPropertyChanged(nameof(IsParkingPlacementArmed));
+        OnPropertyChanged(nameof(ParkingPlacementStatusText));
     }
 
     // Every TaxiwaySegmentShape's IsSelected is mutable (see its own doc
@@ -655,6 +852,13 @@ public class MainViewModel : ViewModelBase
         var runwayIndex = IndexOfRunwayEdit(edit);
         if (runwayIndex < 0) return;
 
+        if (_armedParkingPlacement != null)
+        {
+            _armedParkingPlacement = null;
+            RaiseParkingPlacementChanged();
+            PlaceParkingCommand.RaiseCanExecuteChanged();
+        }
+
         _armedVasiPlacement = (runwayIndex, slot);
         RaiseVasiPlacementChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
@@ -793,9 +997,9 @@ public class MainViewModel : ViewModelBase
 
     // Bound to a plain click (no drag) on empty diagram space — see
     // AirportDiagramView.TaxiwayClearSelectionCommand/EndPan. Deselects every
-    // taxiway AND every taxiway point (both selections live on the same
-    // diagram, so a background click resets both at once), which in turn
-    // drops the Taxi Paths/Taxiway Points grids' filters back to "show
+    // taxiway, taxiway point AND parking spot (all three selections live on
+    // the same diagram, so a background click resets them at once), which in
+    // turn drops the Taxi Paths/Taxiway Points/Parking grids' filters back to "show
     // everything" and closes the batch-edit popover if it was open
     // (ShowTaxiwayBatchEditPopover requires a non-empty taxiway selection).
     private void ClearTaxiwaySelection()
@@ -806,8 +1010,11 @@ public class MainViewModel : ViewModelBase
             shape.IsSelected = false;
         foreach (var shape in Diagram.TaxiwayPoints)
             shape.IsSelected = false;
+        foreach (var shape in Diagram.ParkingSpots)
+            shape.IsSelected = false;
         RefreshTaxiwayFilter();
         RefreshTaxiwayPointFilter();
+        RefreshParkingSpotFilter();
     }
 
     // Bound to a right-click on the diagram (see

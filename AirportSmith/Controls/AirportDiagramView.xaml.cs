@@ -83,6 +83,30 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(VasiPlacementCommandProperty, value);
     }
 
+    // Fired by a click on a parking spot marker — see
+    // ParkingSpotShape_MouseLeftButtonDown. Same Edit-tab-only null-guard
+    // convention as TaxiwayClickCommand.
+    public static readonly DependencyProperty ParkingSpotClickCommandProperty =
+        DependencyProperty.Register(nameof(ParkingSpotClickCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? ParkingSpotClickCommand
+    {
+        get => (ICommand?)GetValue(ParkingSpotClickCommandProperty);
+        set => SetValue(ParkingSpotClickCommandProperty, value);
+    }
+
+    // Same idea as VasiPlacementCommand, for a parking spot armed via the
+    // Parking grid's Place button — tried alongside it in EndPan (at most one
+    // of the two is ever armed, see MainViewModel.ArmParkingPlacement).
+    public static readonly DependencyProperty ParkingPlacementCommandProperty =
+        DependencyProperty.Register(nameof(ParkingPlacementCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? ParkingPlacementCommand
+    {
+        get => (ICommand?)GetValue(ParkingPlacementCommandProperty);
+        set => SetValue(ParkingPlacementCommandProperty, value);
+    }
+
     private const double ZoomStep = 1.15;
 
     // A mouse-down/mouse-up pair with less movement than this (device-
@@ -208,6 +232,8 @@ public partial class AirportDiagramView : UserControl
         var diagramPoint = new Point2D(clickPoint.X, clickPoint.Y);
         if (VasiPlacementCommand?.CanExecute(diagramPoint) == true)
             VasiPlacementCommand.Execute(diagramPoint);
+        else if (ParkingPlacementCommand?.CanExecute(diagramPoint) == true)
+            ParkingPlacementCommand.Execute(diagramPoint);
         else if (TaxiwayClearSelectionCommand?.CanExecute(null) == true)
             TaxiwayClearSelectionCommand.Execute(null);
     }
@@ -254,6 +280,24 @@ public partial class AirportDiagramView : UserControl
         var request = new TaxiwayPointSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
         if (TaxiwayPointClickCommand.CanExecute(request))
             TaxiwayPointClickCommand.Execute(request);
+        e.Handled = true;
+    }
+
+    // Wired on each parking spot marker's Path (see AirportDiagramView.xaml's
+    // ParkingSpots template) — same pattern again, its own command/DTO since
+    // parking spots are an independent selection too. While a placement is
+    // armed the click is deliberately NOT consumed here, so it bubbles to the
+    // root and lands as a background click that places the spot (placing it
+    // right on top of another spot must still work).
+    private void ParkingSpotShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ParkingSpotClickCommand is null) return;
+        if (ParkingPlacementCommand?.CanExecute(new Point2D(0, 0)) == true) return;
+        if (sender is not FrameworkElement { DataContext: ParkingSpotShape shape }) return;
+
+        var request = new ParkingSpotSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        if (ParkingSpotClickCommand.CanExecute(request))
+            ParkingSpotClickCommand.Execute(request);
         e.Handled = true;
     }
 }

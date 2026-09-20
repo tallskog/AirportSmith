@@ -470,13 +470,7 @@ public static class AirportDiagramProjector
         var parkingSpots = new List<(TaxiParkingSpot Spot, LocalPoint Center, LocalPoint HeadingTip)>();
         foreach (var spot in airport.ParkingSpots)
         {
-            var center = new LocalPoint(spot.BiasXMeters, spot.BiasZMeters);
-            var headingRad = DegToRad(spot.HeadingDeg);
-            var tipDistance = spot.RadiusMeters * 1.5;
-            var tip = new LocalPoint(
-                center.X + Math.Sin(headingRad) * tipDistance,
-                center.Z + Math.Cos(headingRad) * tipDistance);
-
+            var (center, tip) = ComputeParkingLocal(spot);
             parkingSpots.Add((spot, center, tip));
         }
 
@@ -543,10 +537,14 @@ public static class AirportDiagramProjector
                     IsRunwayType = t.Segment.Type == TaxiPathType.Runway,
                 };
             }).ToList(),
-            ParkingSpots = parkingSpots.Select(p => new ParkingSpotShape(
-                ToScreen(p.Center),
-                p.Spot.RadiusMeters,
-                ToScreen(p.HeadingTip))).ToList(),
+            ParkingSpots = parkingSpots.Select((p, i) => new ParkingSpotShape
+            {
+                SourceIndex = i,
+                Center = ToScreen(p.Center),
+                RadiusMeters = p.Spot.RadiusMeters,
+                HeadingTip = ToScreen(p.HeadingTip),
+                Label = p.Spot.Number.ToString(),
+            }).ToList(),
             TaxiwayPoints = taxiwayPointsByIndex
                 .OrderBy(kvp => kvp.Key)
                 .Select(kvp => new TaxiwayPointShape
@@ -615,6 +613,40 @@ public static class AirportDiagramProjector
         var biasX = offsetX * frame.Right.X + offsetZ * frame.Right.Z;
 
         return (biasX, biasZ);
+    }
+
+    // A parking spot's BiasX/BiasZ are already in the same local-meters plane
+    // as everything else here, so its position needs no runway-relative
+    // conversion (unlike VASI/PAPI) — the heading tip sits 1.5 radii out along
+    // HeadingDeg (0 = north = +Z), a diagram-level cue for which way the spot
+    // faces.
+    private static (LocalPoint Center, LocalPoint HeadingTip) ComputeParkingLocal(TaxiParkingSpot spot)
+    {
+        var center = new LocalPoint(spot.BiasXMeters, spot.BiasZMeters);
+        var headingRad = DegToRad(spot.HeadingDeg);
+        var tipDistance = spot.RadiusMeters * 1.5;
+        var tip = new LocalPoint(
+            center.X + Math.Sin(headingRad) * tipDistance,
+            center.Z + Math.Cos(headingRad) * tipDistance);
+        return (center, tip);
+    }
+
+    // Screen-space Center/HeadingTip for one spot's CURRENT values — called by
+    // MainViewModel after an Edit tab field change so it can push the result
+    // onto just that spot's ParkingSpotShape without re-running the whole
+    // projection (see ParkingSpotShape's own doc comment for why).
+    public static (Point2D Center, Point2D HeadingTip) ComputeParkingPlacement(AirportDiagram diagram, TaxiParkingSpot spot)
+    {
+        var (center, tip) = ComputeParkingLocal(spot);
+        return (ToScreenPoint(diagram, center), ToScreenPoint(diagram, tip));
+    }
+
+    // Inverse of ComputeParkingPlacement's Center: the BiasX/BiasZ meters that
+    // put a spot exactly at a diagram click.
+    public static (double BiasXMeters, double BiasZMeters) ComputeParkingBias(AirportDiagram diagram, Point2D screenPoint)
+    {
+        var local = ToLocalPoint(diagram, screenPoint);
+        return (local.X, local.Z);
     }
 
     private static Point2D ToScreenPoint(AirportDiagram diagram, LocalPoint p) =>

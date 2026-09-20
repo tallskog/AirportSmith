@@ -238,20 +238,51 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <!-- One circle (sized from the spot's real RadiusMeters) plus a line out to
+                 its HeadingTip per TAXI_PARKING spot, with its Number as a label.
+                 A real airport's whole layout is often several km across, so at
+                 fit-to-view zoom a spot's 14-21m radius is only a few device pixels:
+                 the fill is therefore fairly opaque (the old 20%-alpha fill and 1-unit
+                 outline both dropped below a pixel and made spots effectively
+                 invisible) and the heading line is thick, so each spot still reads as
+                 a solid orange dot. IsVisible backs "Hide All Parking Spots"
+                 (MainViewModel.HideAllParkingSpots) and stays true on the read-only
+                 Diagram tab; IsSelected is the Edit tab's click-to-select highlight
+                 (blue, to stay distinct from the orange taxiway selection) — see
+                 ParkingSpotShape_MouseLeftButtonDown. -->
             <ItemsControl ItemsSource="{Binding ParkingSpots}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Path Stroke="Orange" StrokeThickness="1" Fill="#33FFA500">
-                            <Path.Data>
-                                <GeometryGroup>
-                                    <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}" RadiusX="{Binding RadiusMeters}" RadiusY="{Binding RadiusMeters}"/>
-                                    <LineGeometry StartPoint="{Binding Center, Converter={StaticResource Point2DToPoint}}" EndPoint="{Binding HeadingTip, Converter={StaticResource Point2DToPoint}}"/>
-                                </GeometryGroup>
-                            </Path.Data>
-                        </Path>
+                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
+                            <Path MouseLeftButtonDown="ParkingSpotShape_MouseLeftButtonDown">
+                                <Path.Style>
+                                    <Style TargetType="Path">
+                                        <Setter Property="Fill" Value="#CCFFA500"/>
+                                        <Setter Property="Stroke" Value="DarkOrange"/>
+                                        <Setter Property="StrokeThickness" Value="2.5"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                <Setter Property="Fill" Value="#CC1E90FF"/>
+                                                <Setter Property="Stroke" Value="MediumBlue"/>
+                                                <Setter Property="StrokeThickness" Value="3.5"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Path.Style>
+                                <Path.Data>
+                                    <GeometryGroup>
+                                        <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}" RadiusX="{Binding RadiusMeters}" RadiusY="{Binding RadiusMeters}"/>
+                                        <LineGeometry StartPoint="{Binding Center, Converter={StaticResource Point2DToPoint}}" EndPoint="{Binding HeadingTip, Converter={StaticResource Point2DToPoint}}"/>
+                                    </GeometryGroup>
+                                </Path.Data>
+                            </Path>
+                            <TextBlock Text="{Binding Label}" FontSize="9" FontWeight="Bold" Foreground="Black" IsHitTestVisible="False"
+                                       Canvas.Left="{Binding Center.X}" Canvas.Top="{Binding Center.Y}"
+                                       Margin="-6,-6,0,0"/>
+                        </Canvas>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

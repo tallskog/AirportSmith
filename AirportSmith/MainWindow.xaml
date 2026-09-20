@@ -471,6 +471,69 @@
                                 </DataGrid.Columns>
                             </DataGrid>
 
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock Text="Parking Spots" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <!-- Same all-or-nothing toggle as Taxiway Points above — see
+                                     MainViewModel.HideAllParkingSpots. -->
+                                <CheckBox Content="Hide All from Diagram" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          IsChecked="{Binding DataContext.HideAllParkingSpots, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <!-- Bound to VisibleParkingSpotEdits, not ParkingSpotEdits — clicking one or
+                                 more parking spots on the diagram (Ctrl+click to extend) filters this
+                                 down to just those spot(s); with nothing selected it shows every spot
+                                 (see MainViewModel.RefreshParkingSpotFilter). Edits write straight into
+                                 the loaded Airport and move the matching diagram marker live
+                                 (ParkingSpotEditViewModel/MainViewModel.OnParkingSpotEditChanged). "Place"
+                                 arms click-to-place: the next click on empty diagram space sets that
+                                 spot's X/Z there, same as the Runways grid's VASI/PAPI Place buttons. Type/Name/Suffix are the
+                                 SDK's enumerated codes (see EnumOptions.ParkingTypes). Index is
+                                 the sim's own TAXI_PARKING row index, read-only since Parking-type taxi
+                                 paths reference it. -->
+                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      ItemsSource="{Binding DataContext.VisibleParkingSpotEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Index" Width="50" IsReadOnly="True" Binding="{Binding ItemIndex}"/>
+                                    <DataGridTextColumn Header="Number" Width="60" Binding="{Binding Number, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTemplateColumn Header="Type" Width="130">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ParkingTypes}" DisplayMemberPath="Label" SelectedValuePath="Code"
+                                                          SelectedValue="{Binding Type, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Name" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ParkingNames}" DisplayMemberPath="Label" SelectedValuePath="Code"
+                                                          SelectedValue="{Binding NameCode, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Suffix" Width="80">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ParkingSuffixes}" DisplayMemberPath="Label" SelectedValuePath="Code"
+                                                          SelectedValue="{Binding SuffixCode, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Heading" Width="65" Binding="{Binding HeadingDeg, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTextColumn Header="Radius" Width="55" Binding="{Binding RadiusMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTextColumn Header="X (m)" Width="65" Binding="{Binding BiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTextColumn Header="Z (m)" Width="65" Binding="{Binding BiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <DataGridTemplateColumn Header="Pos" Width="55">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="Place"
+                                                        Command="{Binding DataContext.ArmParkingPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
                     <TextBlock Text="Runways" FontWeight="Bold" Margin="0,0,0,4"/>
                     <DataGrid AutoGenerateColumns="False" CanUserAddRows="False"
                               ItemsSource="{Binding DataContext.RunwayEdits, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -604,7 +667,9 @@
                             TaxiwayClearSelectionCommand="{Binding DataContext.ClearTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayPointClickCommand="{Binding DataContext.ToggleTaxiwayPointSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                            VasiPlacementCommand="{Binding DataContext.PlaceVasiCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            VasiPlacementCommand="{Binding DataContext.PlaceVasiCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            ParkingSpotClickCommand="{Binding DataContext.ToggleParkingSpotSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            ParkingPlacementCommand="{Binding DataContext.PlaceParkingCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
                         <!-- Shown only while a VASI/PAPI slot is armed for click-to-place
                              (see MainViewModel.VasiPlacementStatusText/ArmVasiPlacementCommand
@@ -614,6 +679,13 @@
                                 HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0"
                                 Visibility="{Binding DataContext.IsVasiPlacementArmed, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
                             <TextBlock Text="{Binding DataContext.VasiPlacementStatusText, RelativeSource={RelativeSource AncestorType=Window}}" Foreground="White"/>
+                        </Border>
+                        <!-- Same idea for a parking spot armed via the Parking grid's Place button
+                             (at most one of the two banners is ever visible). -->
+                        <Border Background="#CC000000" CornerRadius="4" Padding="8,4"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0"
+                                Visibility="{Binding DataContext.IsParkingPlacementArmed, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding DataContext.ParkingPlacementStatusText, RelativeSource={RelativeSource AncestorType=Window}}" Foreground="White"/>
                         </Border>
 
                         <!-- Batch-edit popover for the diagram's multi-select — DataContext is

@@ -601,6 +601,60 @@ public class AirportDiagramProjectorTests
     }
 
     [Fact]
+    public void Project_ParkingSpots_SourceIndexMatchesListPosition_AndLabelIsNumber()
+    {
+        var airport = Airport(a =>
+        {
+            a.ParkingSpots.Add(new TaxiParkingSpot { Number = 4, BiasXMeters = 0, BiasZMeters = 0, RadiusMeters = 10 });
+            a.ParkingSpots.Add(new TaxiParkingSpot { Number = 9, BiasXMeters = 50, BiasZMeters = 50, RadiusMeters = 10 });
+        });
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.Equal([0, 1], diagram.ParkingSpots.Select(s => s.SourceIndex));
+        Assert.Equal(["4", "9"], diagram.ParkingSpots.Select(s => s.Label));
+        Assert.All(diagram.ParkingSpots, s => Assert.True(s.IsVisible));
+        Assert.All(diagram.ParkingSpots, s => Assert.False(s.IsSelected));
+    }
+
+    [Fact]
+    public void ComputeParkingPlacement_AfterEditingSpot_MatchesWhatProjectWouldHaveProduced()
+    {
+        var spot = new TaxiParkingSpot { BiasXMeters = 100, BiasZMeters = 50, HeadingDeg = 0, RadiusMeters = 10 };
+        var airport = Airport(a => a.ParkingSpots.Add(spot));
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        spot.BiasXMeters = 80;
+        spot.BiasZMeters = 30;
+        spot.HeadingDeg = 90;
+        var (center, tip) = AirportDiagramProjector.ComputeParkingPlacement(diagram, spot);
+
+        // Same screen mapping Project used for the original (100,50) -> (100,100) shape.
+        Assert.Equal(80, center.X, Precision);
+        Assert.Equal(120, center.Y, Precision);
+        // Heading 90 = east = +X, 1.5 radii out.
+        Assert.Equal(95, tip.X, Precision);
+        Assert.Equal(120, tip.Y, Precision);
+    }
+
+    [Fact]
+    public void ComputeParkingBias_InvertsComputeParkingPlacementsCenter()
+    {
+        var spot = new TaxiParkingSpot { BiasXMeters = 100, BiasZMeters = 50, RadiusMeters = 10 };
+        var diagram = AirportDiagramProjector.Project(Airport(a => a.ParkingSpots.Add(spot)));
+
+        var (biasX, biasZ) = AirportDiagramProjector.ComputeParkingBias(diagram, new Point2D(70, 130));
+        spot.BiasXMeters = biasX;
+        spot.BiasZMeters = biasZ;
+        var (center, _) = AirportDiagramProjector.ComputeParkingPlacement(diagram, spot);
+
+        Assert.Equal(70, center.X, Precision);
+        Assert.Equal(130, center.Y, Precision);
+        Assert.Equal(70, biasX, Precision);
+        Assert.Equal(20, biasZ, Precision);
+    }
+
+    [Fact]
     public void Project_EmptyAirport_ReturnsEmptyCollections_NonDegenerateCanvas_NoException()
     {
         var airport = Airport();

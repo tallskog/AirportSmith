@@ -1322,4 +1322,212 @@ public class MainViewModelTests
         Assert.Equal(100, shape.Position.X, 3);
         Assert.Equal(750, shape.Position.Y, 3);
     }
+
+    // Three spots spread across the canvas; airport-reference (0,0) with no
+    // runways, so the diagram's screen mapping is just
+    // screenX = X + OriginXMeters, screenY = OriginZMeters - Z.
+    private static AirportDetails BuildAirportWithThreeParkingSpots()
+    {
+        var airport = new AirportDetails { Icao = "EFHK", Latitude = 0, Longitude = 0 };
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 0, Number = 1, BiasXMeters = 0, BiasZMeters = 0, RadiusMeters = 10 });
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 1, Number = 2, BiasXMeters = 100, BiasZMeters = 0, RadiusMeters = 10 });
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 2, Number = 3, BiasXMeters = 200, BiasZMeters = 0, RadiusMeters = 10 });
+        return airport;
+    }
+
+    [Fact]
+    public void ParkingSpotEdits_OneRowPerSpot_AndAllVisibleWhenNothingSelected()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+
+        Assert.Equal(3, vm.ParkingSpotEdits.Count);
+        Assert.Equal(3, vm.VisibleParkingSpotEdits.Count);
+        Assert.Equal(3, vm.Diagram!.ParkingSpots.Count);
+    }
+
+    [Fact]
+    public void ToggleParkingSpotSelection_PlainClick_SelectsOnlyThatSpot_AndFiltersGrid()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var shapes = vm.Diagram!.ParkingSpots;
+
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(shapes[1], ExtendSelection: false));
+        Assert.Equal([false, true, false], shapes.Select(s => s.IsSelected));
+        Assert.Equal([2], vm.VisibleParkingSpotEdits.Select(e => e.Number));
+
+        // A plain click on another spot replaces the selection.
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(shapes[2], ExtendSelection: false));
+        Assert.Equal([3], vm.VisibleParkingSpotEdits.Select(e => e.Number));
+    }
+
+    [Fact]
+    public void ToggleParkingSpotSelection_CtrlClick_ExtendsAndTogglesSelection()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var shapes = vm.Diagram!.ParkingSpots;
+
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(shapes[0], ExtendSelection: false));
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(shapes[2], ExtendSelection: true));
+        Assert.Equal([1, 3], vm.VisibleParkingSpotEdits.Select(e => e.Number));
+
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(shapes[0], ExtendSelection: true));
+        Assert.Equal([3], vm.VisibleParkingSpotEdits.Select(e => e.Number));
+    }
+
+    [Fact]
+    public void ClearTaxiwaySelection_AlsoClearsParkingSelection_AndShowsEveryRowAgain()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[1], false));
+
+        vm.ClearTaxiwaySelectionCommand.Execute(null);
+
+        Assert.All(vm.Diagram.ParkingSpots, s => Assert.False(s.IsSelected));
+        Assert.Equal(3, vm.VisibleParkingSpotEdits.Count);
+    }
+
+    [Fact]
+    public void EditingParkingSpotPosition_MovesTheMatchingDiagramShapeOnly()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var diagram = vm.Diagram!;
+        var untouchedBefore = diagram.ParkingSpots[2].Center;
+
+        vm.ParkingSpotEdits[1].BiasXMeters = 60;
+        vm.ParkingSpotEdits[1].BiasZMeters = 25;
+
+        var moved = diagram.ParkingSpots[1];
+        Assert.Equal(60 + diagram.OriginXMeters, moved.Center.X, 3);
+        Assert.Equal(diagram.OriginZMeters - 25, moved.Center.Y, 3);
+        Assert.Equal(untouchedBefore, diagram.ParkingSpots[2].Center);
+        // The edit went into the real airport model too.
+        Assert.Equal(60, vm.Airport!.ParkingSpots[1].BiasXMeters);
+        Assert.Equal(25, vm.Airport.ParkingSpots[1].BiasZMeters);
+    }
+
+    [Fact]
+    public void EditingParkingSpotHeadingRadiusAndNumber_UpdatesDiagramShape()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var diagram = vm.Diagram!;
+        var shape = diagram.ParkingSpots[0];
+
+        vm.ParkingSpotEdits[0].RadiusMeters = 20;
+        vm.ParkingSpotEdits[0].HeadingDeg = 90;
+        vm.ParkingSpotEdits[0].Number = 42;
+
+        Assert.Equal(20, shape.RadiusMeters);
+        Assert.Equal("42", shape.Label);
+        // Heading 90 = east: tip is 1.5 radii (30m) to the right of center, same row.
+        Assert.Equal(shape.Center.X + 30, shape.HeadingTip.X, 3);
+        Assert.Equal(shape.Center.Y, shape.HeadingTip.Y, 3);
+    }
+
+    [Fact]
+    public void EditingParkingSpotTypeOrName_DoesNotDisturbDiagramGeometry()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var shape = vm.Diagram!.ParkingSpots[0];
+        var centerBefore = shape.Center;
+
+        vm.ParkingSpotEdits[0].Type = 10;
+        vm.ParkingSpotEdits[0].NameCode = 10;
+
+        Assert.Equal(centerBefore, shape.Center);
+        Assert.Equal(10, vm.Airport!.ParkingSpots[0].Type);
+    }
+
+    [Fact]
+    public void HideAllParkingSpots_HidesEveryShape_ClearsSelection_AndRestores()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+
+        vm.HideAllParkingSpots = true;
+
+        Assert.All(vm.Diagram.ParkingSpots, s => Assert.False(s.IsVisible));
+        Assert.All(vm.Diagram.ParkingSpots, s => Assert.False(s.IsSelected));
+        Assert.Equal(3, vm.VisibleParkingSpotEdits.Count);
+
+        vm.HideAllParkingSpots = false;
+
+        Assert.All(vm.Diagram.ParkingSpots, s => Assert.True(s.IsVisible));
+    }
+
+    [Fact]
+    public void ArmParkingPlacementCommand_ArmsPlacementAndSetsStatusText()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+
+        Assert.False(vm.IsParkingPlacementArmed);
+        Assert.Null(vm.ParkingPlacementStatusText);
+        Assert.False(vm.PlaceParkingCommand.CanExecute(new Point2D(0, 0)));
+
+        vm.ArmParkingPlacementCommand.Execute(vm.ParkingSpotEdits[1]);
+
+        Assert.True(vm.IsParkingPlacementArmed);
+        Assert.Contains("2", vm.ParkingPlacementStatusText);
+        Assert.True(vm.PlaceParkingCommand.CanExecute(new Point2D(0, 0)));
+    }
+
+    [Fact]
+    public void PlaceParkingCommand_WritesBiasIntoArmedSpot_MovesShape_AndDisarms()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        var diagram = vm.Diagram!;
+        vm.ArmParkingPlacementCommand.Execute(vm.ParkingSpotEdits[1]);
+
+        var click = new Point2D(diagram.OriginXMeters + 70, diagram.OriginZMeters - 40);
+        vm.PlaceParkingCommand.Execute(click);
+
+        Assert.Equal(70, vm.ParkingSpotEdits[1].BiasXMeters, 3);
+        Assert.Equal(40, vm.ParkingSpotEdits[1].BiasZMeters, 3);
+        Assert.Equal(click.X, diagram.ParkingSpots[1].Center.X, 3);
+        Assert.Equal(click.Y, diagram.ParkingSpots[1].Center.Y, 3);
+        // Other spots untouched.
+        Assert.Equal(0, vm.ParkingSpotEdits[0].BiasXMeters);
+        Assert.Equal(200, vm.ParkingSpotEdits[2].BiasXMeters);
+
+        Assert.False(vm.IsParkingPlacementArmed);
+        Assert.Null(vm.ParkingPlacementStatusText);
+        Assert.False(vm.PlaceParkingCommand.CanExecute(click));
+    }
+
+    [Fact]
+    public void ArmingParkingAndVasiPlacement_AreMutuallyExclusive()
+    {
+        var airport = BuildAirportForVasiPlacement();
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 0, Number = 1, RadiusMeters = 10 });
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.ArmParkingPlacementCommand.Execute(vm.ParkingSpotEdits[0]);
+        vm.ArmPrimaryLeftVasiPlacementCommand.Execute(vm.RunwayEdits[0]);
+
+        Assert.True(vm.IsVasiPlacementArmed);
+        Assert.False(vm.IsParkingPlacementArmed);
+        Assert.False(vm.PlaceParkingCommand.CanExecute(new Point2D(0, 0)));
+
+        vm.ArmParkingPlacementCommand.Execute(vm.ParkingSpotEdits[0]);
+
+        Assert.True(vm.IsParkingPlacementArmed);
+        Assert.False(vm.IsVasiPlacementArmed);
+        Assert.False(vm.PlaceVasiCommand.CanExecute(new Point2D(0, 0)));
+    }
+
+    [Fact]
+    public void LoadingAnotherAirport_DisarmsParkingPlacement_AndResetsHideAll()
+    {
+        var store = new FakeAirportProjectStore();
+        store.Save(BuildAirportWithThreeParkingSpots());
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store) { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+        vm.ArmParkingPlacementCommand.Execute(vm.ParkingSpotEdits[0]);
+        vm.HideAllParkingSpots = true;
+
+        vm.LoadProjectCommand.Execute(null);
+
+        Assert.False(vm.IsParkingPlacementArmed);
+        Assert.False(vm.HideAllParkingSpots);
+        Assert.All(vm.Diagram!.ParkingSpots, s => Assert.True(s.IsVisible));
+    }
 }

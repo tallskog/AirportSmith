@@ -1,4 +1,5 @@
 using AirportSmith.Models;
+using AirportSmith.Services;
 
 namespace AirportSmith.Helpers;
 
@@ -52,6 +53,27 @@ public static class EnumOptions
     public static readonly IReadOnlyList<TaxiEdgeType?> TaxiEdgeTypesFilter =
         new TaxiEdgeType?[] { null }.Concat(Enum.GetValues<TaxiEdgeType>().Cast<TaxiEdgeType?>()).ToList();
 
+    // Pickers for TaxiParkingSpot's Type/NameCode/SuffixCode, which are the
+    // SDK's documented enumerated int codes rather than C# enums (see
+    // TaxiParkingSpot.cs) — built from the same label tables the Airport Data
+    // tab and XML exporter use, so all three always agree on what a code
+    // means. ParkingSuffixes is limited to NONE plus GATE_A..GATE_Z (codes
+    // 0 and 12-37): AirportXmlExporter.MapParkingSuffix can only export
+    // those, so offering PARKING/DOCK/etc. as a suffix would silently export
+    // as no suffix at all.
+    public static readonly IReadOnlyList<CodeOption> ParkingTypes =
+        AirportDataTreeBuilder.TaxiParkingTypeLabels.OrderBy(kvp => kvp.Key)
+            .Select(kvp => new CodeOption(kvp.Key, kvp.Value)).ToList();
+
+    public static readonly IReadOnlyList<CodeOption> ParkingNames =
+        AirportDataTreeBuilder.TaxiParkingNameLabels.OrderBy(kvp => kvp.Key)
+            .Select(kvp => new CodeOption(kvp.Key, kvp.Value)).ToList();
+
+    public static readonly IReadOnlyList<CodeOption> ParkingSuffixes =
+        AirportDataTreeBuilder.TaxiParkingNameLabels.Where(kvp => kvp.Key is 0 or (>= 12 and <= 37))
+            .OrderBy(kvp => kvp.Key)
+            .Select(kvp => new CodeOption(kvp.Key, kvp.Value)).ToList();
+
     // A labeled 3-way (any/yes/no) option list for the Taxi Paths grid's
     // boolean-column filters (left/right edge lighted, center line/lighted,
     // hide from diagram) — a plain IReadOnlyList<bool?> would display via
@@ -67,3 +89,8 @@ public static class EnumOptions
 
 // See EnumOptions.BoolFilterOptions.
 public sealed record BoolFilterOption(string Label, bool? Value);
+
+// One SDK int code plus its label, for ComboBoxes bound via
+// SelectedValuePath="Code" DisplayMemberPath="Label" — see
+// EnumOptions.ParkingTypes.
+public sealed record CodeOption(int Code, string Label);
