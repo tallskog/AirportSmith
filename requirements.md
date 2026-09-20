@@ -1188,7 +1188,10 @@ Acceptance criteria:
   set.
 - Every `AirportDetails.Runways` entry becomes a `<Runway>` with matching
   geometry/surface/lighting, a `<Vasi>` element only for each non-null VASI
-  slot (not an empty/default one for "not installed"), an `<ApproachLights>`
+  slot (not an empty/default one for "not installed" — `biasX`/`biasZ`
+  converted from AirportSmith's own threshold-relative/signed storage into
+  the SDK's documented center-relative/unsigned meaning, see the amendment
+  at this epic's end), an `<ApproachLights>`
   element only for each non-null approach-light system, an
   `<OffsetThreshold>`/`<BlastPad>`/`<Overrun>` only for each non-null
   pavement feature, and exactly two `<RunwayStart>` elements computed from
@@ -1832,6 +1835,56 @@ These are draft candidates surfaced by the research above, not approved user sto
   exporter and sets `LastXmlExportPath`/`LastXmlExportWarnings`; a cancelled
   save-file dialog leaves both untouched — via the new
   `Fakes/FakeAirportXmlExporter`.
+
+### Amendment: fixed `<Vasi>` biasX/biasZ export — confirmed wrong against a live Scenery Editor import
+
+**Root cause, confirmed 2026-09-20 via a real round trip:** a LEFT PAPI was
+added to OIBK runway 09L (`LengthMeters=3645.635986328125`) in AirportSmith
+via the diagram's click-to-place (added the previous session), exporting
+`biasX="-54.75245734797872"` `biasZ="267.35724458909516"`. On import into the
+MSFS 2024 SDK Dev Mode Scenery Editor, `biasX` silently reset to `0` (no
+error) — and manually re-placing the PAPI at roughly the intended real-world
+spot and reading its properties back gave `biasX=38`, and a Z-axis value of
+`1439` (labelled `biasY` in the Editor's own property panel UI). Checked
+directly against the local MSFS 2024 SDK docs
+(`Documentation/public/retail/content-configuration/environment/
+airports-and-facilities/runway-xml-properties`): `<Vasi>`'s `biasZ` is
+documented as "distance along the runway **from the runway center point** to
+the VASI reference point" — not from the threshold, which is what
+AirportSmith's own `Runway.*VasiBiasZMeters` (and the Edit tab's Z column,
+diagram rendering, and click-to-place — all unchanged, still "distance
+inward from that end's threshold", the more intuitive authoring convention)
+actually store. `biasX` is documented only as "distance ... across the
+runway width" with no sign — `side` (LEFT/RIGHT) already carries which
+physical side, and exporting AirportSmith's own signed drawing-convention
+value produced the observed `0`-reset.
+
+Both confirmed by the numbers themselves:
+`halfLength (1822.818) - ourBiasZ (267.357) = 1555.461`, matching the
+manually-read `1439` closely enough (same order of magnitude and sign, an
+eyeballed drag-placement in a different editor/zoom level) to confirm the
+"from center" hypothesis over the old "from threshold" one; and
+`Math.Abs(-54.75) = 54.75` vs. the manually-read `38` similarly confirms
+"unsigned magnitude" over "signed."
+
+**Fix — `AirportXmlExporter.AddVasi`** (the only code changed; the Edit
+tab/diagram/click-to-place all keep their existing, more intuitive
+threshold-relative/signed internal meaning — this was purely an
+export-mapping bug):
+- `biasZ` exported as `halfLength - Runway.*VasiBiasZMeters` (symmetric for
+  both PRIMARY and SECONDARY, since each stores its own "distance inward
+  from ITS OWN end's threshold").
+- `biasX` exported as `Math.Abs(Runway.*VasiBiasXMeters)`.
+- Covered by
+  `AirportXmlExporterTests.Build_Vasi_ConvertsThresholdRelativeBiasToSdkDocumentedCenterRelativeAndUnsignedX`
+  (asserts against the exact real OIBK numbers above) and updated
+  `Build_FullyPopulatedRunway_MapsAttributesAndSubElementsWithCorrectEnumStrings`/
+  `Build_MissingVasiPosition_DefaultsToZeroAndWarns` (a missing/defaulted
+  `BiasZMeters` of `0` now correctly converts to "at the threshold", i.e.
+  `halfLength`, rather than the old accidental "at the runway center").
+- **Not yet re-confirmed against a live import** (the round trip above used
+  the pre-fix export) — worth re-testing the same OIBK 09L PAPI once this
+  fix ships, to close the loop.
 - Actually importing the generated XML into the MSFS 2024 SDK Dev Mode
   Scenery Editor (or compiling it with `bglcomp`) is not covered by automated
   tests (requires MSFS/the SDK) — verified manually.

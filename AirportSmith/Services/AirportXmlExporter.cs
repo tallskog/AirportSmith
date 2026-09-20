@@ -166,13 +166,13 @@ public class AirportXmlExporter : IAirportXmlExporter
         AddApproachLights(element, "SECONDARY", r.SecondaryApproachLights);
 
         AddVasi(element, "PRIMARY", "LEFT", r.PrimaryLeftVasiType, r.PrimaryLeftVasiAngleDeg,
-            r.PrimaryLeftVasiBiasXMeters, r.PrimaryLeftVasiBiasZMeters, r.PrimaryLeftVasiSpacingMeters, warnings);
+            r.PrimaryLeftVasiBiasXMeters, r.PrimaryLeftVasiBiasZMeters, r.PrimaryLeftVasiSpacingMeters, r.LengthMeters, warnings);
         AddVasi(element, "PRIMARY", "RIGHT", r.PrimaryRightVasiType, r.PrimaryRightVasiAngleDeg,
-            r.PrimaryRightVasiBiasXMeters, r.PrimaryRightVasiBiasZMeters, r.PrimaryRightVasiSpacingMeters, warnings);
+            r.PrimaryRightVasiBiasXMeters, r.PrimaryRightVasiBiasZMeters, r.PrimaryRightVasiSpacingMeters, r.LengthMeters, warnings);
         AddVasi(element, "SECONDARY", "LEFT", r.SecondaryLeftVasiType, r.SecondaryLeftVasiAngleDeg,
-            r.SecondaryLeftVasiBiasXMeters, r.SecondaryLeftVasiBiasZMeters, r.SecondaryLeftVasiSpacingMeters, warnings);
+            r.SecondaryLeftVasiBiasXMeters, r.SecondaryLeftVasiBiasZMeters, r.SecondaryLeftVasiSpacingMeters, r.LengthMeters, warnings);
         AddVasi(element, "SECONDARY", "RIGHT", r.SecondaryRightVasiType, r.SecondaryRightVasiAngleDeg,
-            r.SecondaryRightVasiBiasXMeters, r.SecondaryRightVasiBiasZMeters, r.SecondaryRightVasiSpacingMeters, warnings);
+            r.SecondaryRightVasiBiasXMeters, r.SecondaryRightVasiBiasZMeters, r.SecondaryRightVasiSpacingMeters, r.LengthMeters, warnings);
 
         foreach (var start in BuildRunwayStarts(r))
             element.Add(start);
@@ -198,7 +198,7 @@ public class AirportXmlExporter : IAirportXmlExporter
     }
 
     private static void AddVasi(XElement runwayElement, string end, string side, VasiType? type, double? angleDeg,
-        double? biasX, double? biasZ, double? spacing, List<string> warnings)
+        double? biasX, double? biasZ, double? spacing, double lengthMeters, List<string> warnings)
     {
         if (type is null) return;
 
@@ -212,12 +212,35 @@ public class AirportXmlExporter : IAirportXmlExporter
             warnings.Add($"Runway {end} {side} VASI/PAPI has no stored position (biasX/biasZ/spacing) — " +
                 "re-extract this airport to pick up the new fields; defaulted to 0 for now.");
 
+        // Two conversions confirmed the hard way against a live MSFS 2024
+        // Scenery Editor import (a real OIBK 09L LEFT PAPI): the SDK's own
+        // <Vasi> docs (content-configuration/environment/airports-and-
+        // facilities/runway-xml-properties) define biasZ as "distance along
+        // the runway FROM THE RUNWAY CENTER POINT to the VASI reference
+        // point" — NOT from the threshold, which is what Runway's own
+        // *VasiBiasZMeters (and the Edit tab's Z column/diagram/click-to-
+        // place — all still "distance inward from that end's threshold",
+        // unchanged) actually store. halfLength - biasZ converts between the
+        // two: a point `biasZ` meters inward from this end's threshold sits
+        // `halfLength - biasZ` meters from the center, toward this end —
+        // symmetric for both PRIMARY and SECONDARY since each is relative to
+        // its own end's threshold. And biasX is documented as a plain
+        // "distance ... across the runway width" (side already carries
+        // which physical side) — exporting AirportSmith's OWN signed value
+        // (positive/negative only meaningful as an internal diagram-drawing
+        // convention, unrelated to Left/Right) produced biasX=-54.75 in a
+        // real export, which the Scenery Editor silently reset to 0 on
+        // import instead of erroring — Math.Abs fixes that.
+        var halfLength = lengthMeters / 2;
+        var biasXMagnitude = Math.Abs(biasX ?? 0);
+        var biasZFromCenter = halfLength - (biasZ ?? 0);
+
         runwayElement.Add(new XElement("Vasi",
             new XAttribute("end", end),
             new XAttribute("type", MapVasiType(type.Value)),
             new XAttribute("side", side),
-            new XAttribute("biasX", F(biasX ?? 0)),
-            new XAttribute("biasZ", F(biasZ ?? 0)),
+            new XAttribute("biasX", F(biasXMagnitude)),
+            new XAttribute("biasZ", F(biasZFromCenter)),
             new XAttribute("spacing", F(spacing ?? 0)),
             new XAttribute("pitch", F(angleDeg ?? 0))));
     }

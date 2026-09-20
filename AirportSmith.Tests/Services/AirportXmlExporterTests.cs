@@ -136,8 +136,17 @@ public class AirportXmlExporterTests
         Assert.Equal("PRIMARY", vasi.Attribute("end")!.Value);
         Assert.Equal("LEFT", vasi.Attribute("side")!.Value);
         Assert.Equal("PAPI4", vasi.Attribute("type")!.Value);
-        Assert.Equal(-25, ParseD(vasi.Attribute("biasX")!.Value), 3);
-        Assert.Equal(-300, ParseD(vasi.Attribute("biasZ")!.Value), 3);
+        // AirportSmith's own Runway.PrimaryLeftVasiBiasXMeters/BiasZMeters
+        // store a signed offset and "distance inward from the PRIMARY
+        // threshold" respectively (see AddVasi's own comment on why — an
+        // internal drawing/editing convention, not the schema's). The
+        // exported <Vasi> attributes must be the SDK's own documented
+        // meanings instead: biasX is an unsigned distance across the runway
+        // (Math.Abs — a real negative export got silently reset to 0 by the
+        // Scenery Editor's import) and biasZ is measured from the RUNWAY
+        // CENTER, not the threshold — halfLength(1000) - (-300) = 1300.
+        Assert.Equal(25, ParseD(vasi.Attribute("biasX")!.Value), 3);
+        Assert.Equal(1300, ParseD(vasi.Attribute("biasZ")!.Value), 3);
         Assert.Equal(3.0, ParseD(vasi.Attribute("pitch")!.Value), 3);
 
         Assert.Equal(2, runwayElement.Elements("RunwayStart").Count());
@@ -173,7 +182,42 @@ public class AirportXmlExporterTests
         var vasi = result.Document.Root!.Element("Airport")!.Element("Runway")!.Element("Vasi")!;
 
         Assert.Equal(0, ParseD(vasi.Attribute("biasX")!.Value), 3);
+        // A missing (defaulted-to-0) BiasZMeters means "at the threshold" in
+        // AirportSmith's own inward-from-threshold convention, which
+        // converts to the runway's own half-length from center — see
+        // AddVasi's own comment. BareRunway's LengthMeters is 2000.
+        Assert.Equal(1000, ParseD(vasi.Attribute("biasZ")!.Value), 3);
         Assert.Contains(result.Warnings, w => w.Contains("VASI", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_Vasi_ConvertsThresholdRelativeBiasToSdkDocumentedCenterRelativeAndUnsignedX()
+    {
+        // Real numbers from a live round-trip test (2026-09-20): a LEFT PAPI
+        // added to OIBK runway 09L (LengthMeters=3645.635986328125) via
+        // AirportSmith's click-to-place, exported with the pre-fix
+        // pass-through as biasX="-54.75245734797872"
+        // biasZ="267.35724458909516" — the Scenery Editor silently reset the
+        // negative biasX to 0 on import, and manually re-placing it at
+        // roughly the same spot read back as biasX=38, biasZ=1439 (matching
+        // the SDK's own documented "distance from runway CENTER" for biasZ,
+        // not the threshold), confirming both conversions AddVasi now
+        // applies. Asserting against the exact pre-conversion numbers here
+        // rather than the rounder BareRunway fixture above, so this test
+        // fails loudly if either conversion regresses.
+        var runway = BareRunway();
+        runway.LengthMeters = 3645.635986328125;
+        runway.PrimaryLeftVasiType = VasiType.Papi4;
+        runway.PrimaryLeftVasiBiasXMeters = -54.75245734797872;
+        runway.PrimaryLeftVasiBiasZMeters = 267.35724458909516;
+        runway.PrimaryLeftVasiSpacingMeters = 15;
+        var airport = Airport(a => a.Runways.Add(runway));
+
+        var vasi = AirportXmlExporter.Build(airport).Document
+            .Root!.Element("Airport")!.Element("Runway")!.Element("Vasi")!;
+
+        Assert.Equal(54.75245734797872, ParseD(vasi.Attribute("biasX")!.Value), 3);
+        Assert.Equal(1555.4607458245457, ParseD(vasi.Attribute("biasZ")!.Value), 2);
     }
 
     [Fact]
