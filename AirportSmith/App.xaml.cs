@@ -39,7 +39,11 @@ public partial class App : Application
         IMapTileCache mapTileCache = new MapTileDiskCache();
         IMapTileService mapTileService = new MapTileService(mapTileSource, mapTileCache);
 
-        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService);
+        // Real, always-on feature (e.g. confirming a parking-spot delete) —
+        // always wired up, same as projectStore/xmlExporter above.
+        IConfirmationService confirmationService = new ConfirmationService();
+
+        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService, confirmationService);
         var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();

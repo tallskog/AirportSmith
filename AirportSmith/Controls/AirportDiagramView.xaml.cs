@@ -210,12 +210,37 @@ public partial class AirportDiagramView : UserControl
         // A resize re-fits only until the user takes over — after that their
         // chosen zoom/pan is preserved across window resizes.
         SizeChanged += (_, _) => { if (!_userAdjustedView) FitToView(); ScheduleTileRefresh(); };
-        // A newly loaded airport starts fitted again. The old diagram's tiles
-        // are meaningless for the new one (different reference point/origin),
-        // so clear immediately rather than waiting for the debounced refresh.
-        DataContextChanged += (_, _) =>
+        // A newly loaded airport starts fitted again — but re-fit ONLY when
+        // it's actually a different airport, not just a new AirportDiagram
+        // instance for the SAME one. MainViewModel.SetAirport re-runs
+        // AirportDiagramProjector.Project (a fresh AirportDiagram, a new
+        // DataContext reference) after any structural in-place edit too, not
+        // just a genuine load — e.g. DeleteSelectedParkingSpotsCommand — and
+        // without this check, deleting a single spot would reset the user's
+        // zoom/pan back to fit-to-view every time, which is exactly the
+        // "resets the whole view for a small edit" annoyance FitToView is
+        // meant to avoid on every OTHER live edit (moving a spot, renaming a
+        // taxiway, etc. mutate shapes in place with no DataContext change at
+        // all). ReferenceLatitude/Longitude are copied straight from
+        // AirportDetails.Latitude/Longitude and never change for the same
+        // loaded airport, so an exact match is a reliable "same airport"
+        // signal; a real airport's canvas can still shift/resize slightly
+        // after a structural edit (e.g. deleting the spot that was defining
+        // one edge of the bounding box), which may nudge the view a little
+        // even with zoom/pan preserved — an acceptable tradeoff against
+        // losing the zoom level entirely.
+        DataContextChanged += (_, e) =>
         {
-            FitToView();
+            var isSameAirport = e.OldValue is AirportDiagram oldDiagram && e.NewValue is AirportDiagram newDiagram
+                && oldDiagram.ReferenceLatitude == newDiagram.ReferenceLatitude
+                && oldDiagram.ReferenceLongitude == newDiagram.ReferenceLongitude;
+            if (!isSameAirport) FitToView();
+
+            // The old diagram's tiles are meaningless for a genuinely new
+            // airport (different reference point/origin); even for the same
+            // airport, the canvas origin may have shifted (see above), so
+            // tile positions need recomputing either way — clear immediately
+            // rather than waiting for the debounced refresh.
             _mapTiles.Clear();
             _pendingTileRequests.Clear();
             _ = RefreshVisibleTilesAsync();

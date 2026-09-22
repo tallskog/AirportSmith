@@ -9,6 +9,17 @@
         MinHeight="480" MinWidth="820"
         WindowStartupLocation="CenterScreen">
 
+    <!-- The app's first keyboard shortcut: Delete removes every currently-
+         selected parking spot (see MainViewModel.DeleteSelectedParkingSpotsCommand),
+         with its own confirmation prompt since there's no undo. A Window-level
+         binding fires regardless of which control has focus, UNLESS that
+         control already consumes the Delete key itself (e.g. a grid text cell
+         mid-edit keeps deleting the selected text, as before) — and
+         CanExecute is false whenever nothing is actually selected. -->
+    <Window.InputBindings>
+        <KeyBinding Key="Delete" Command="{Binding DeleteSelectedParkingSpotsCommand}"/>
+    </Window.InputBindings>
+
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -501,8 +512,11 @@
                                  spot's X/Z there, same as the Runways grid's VASI/PAPI Place buttons. Type/Name/Suffix are the
                                  SDK's enumerated codes (see EnumOptions.ParkingTypes). Index is
                                  the sim's own TAXI_PARKING row index, read-only since Parking-type taxi
-                                 paths reference it. -->
-                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                 paths reference it. CanUserDeleteRows=False so pressing Delete here can
+                                 only ever mean DeleteSelectedParkingSpotsCommand above — without it,
+                                 WPF's own default row-delete gesture could silently remove a visually
+                                 selected row from this filtered list without touching Airport.ParkingSpots. -->
+                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                                       ItemsSource="{Binding DataContext.VisibleParkingSpotEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Index" Width="50" IsReadOnly="True" Binding="{Binding ItemIndex}"/>

@@ -1254,13 +1254,14 @@ tab was the only place they appeared).
   placement math. Only one of VASI/PAPI placement and parking placement can
   be armed at once (arming either disarms the other), and loading another
   airport disarms both.
-- **Deliberately out of scope:** adding or deleting parking spots (a new
-  spot would need a fresh sim-unique `ItemIndex` and taxi-path linkage — a
-  separate feature), and dragging a spot with the mouse (Place-by-click is
-  used instead, consistent with VASI/PAPI, and avoids competing with
-  pan-drag). `BIAS_X`/`BIAS_Z`'s axis convention remains **UNCONFIRMED
-  against a live sim** (same caveat as everywhere else in the Diagram
-  epic) — this feature inherits it rather than resolving it.
+- **Deliberately out of scope:** adding parking spots (a new spot would need
+  a fresh sim-unique `ItemIndex` and taxi-path linkage — a separate feature;
+  **deleting** one is covered by the follow-up amendment directly below),
+  and dragging a spot with the mouse (Place-by-click is used instead,
+  consistent with VASI/PAPI, and avoids competing with pan-drag). `BIAS_X`/
+  `BIAS_Z`'s axis convention remains **UNCONFIRMED against a live sim** (same
+  caveat as everywhere else in the Diagram epic) — this feature inherits it
+  rather than resolving it.
 - **Backwards compatibility:** no persisted field was added, removed, or
   reinterpreted (`TaxiParkingSpot` is unchanged), so a project file written
   by any earlier version loads exactly as before.
@@ -1278,6 +1279,135 @@ tab was the only place they appeared).
   visual rendering, real mouse input (click-select, Place), and the grid's
   ComboBox/edit behavior are not covered by automated tests — verified
   manually.
+
+### Amendment: delete parking spot(s) via selection + Delete key
+
+**User story:** As a user, after selecting one or more parking spots on the
+Edit tab's diagram, I can press the Delete key to remove them, with a
+confirmation prompt first since there's no undo.
+
+- The app's first keyboard shortcut: `MainWindow.xaml` gets a `Window`-level
+  `KeyBinding` (`Key="Delete"` → `DeleteSelectedParkingSpotsCommand`) — fires
+  regardless of which control has focus unless that control already consumes
+  the Delete key itself (e.g. a grid text cell mid-edit, which keeps deleting
+  the selected text as before). Enabled only while at least one parking spot
+  is selected (`Diagram.ParkingSpots.Any(p => p.IsSelected)`); does nothing
+  otherwise.
+- Pressing Delete shows a confirmation dialog ("Delete N parking spot(s)?
+  Any taxi path connecting to them will be deleted too.", singular/plural)
+  via a new `IConfirmationService`/`ConfirmationService` (mirrors
+  `IFileDialogService`'s interface-plus-fake pattern so `MainViewModel` stays
+  unit-testable with no `System.Windows` dependency). Declining leaves
+  everything unchanged.
+- Confirming removes the selected spot(s) from `Airport.ParkingSpots`, and
+  also removes any `Type == Parking` taxi path whose `EndIndex` references
+  a deleted spot's `ItemIndex` — leaving that path referencing a deleted
+  spot would be genuinely invalid data, not just an unnamed/default one (the
+  precedent `DeleteTaxiNameCommand` set of detaching-rather-than-cascading
+  doesn't apply here, since taxi names have a valid "no name" state and a
+  parking path's endpoint doesn't). Same `ItemIndex`-uniqueness guard as the
+  move-a-spot sync above: a spot whose `ItemIndex` collides with another
+  spot's (pre-`ItemIndex`-migration data) has its paths left untouched
+  rather than risk cascading the wrong one's.
+- Implemented by mutating `Airport.ParkingSpots`/`Airport.TaxiPaths` directly
+  and then calling `SetAirport(Airport)` again — the same rebuild path every
+  airport load/reload already uses, guaranteeing `Diagram`, `ParkingSpotEdits`,
+  `TaxiPathEdits`, and every filter/subscription stay consistent. **Known
+  side effect, accepted as a tradeoff:** this also resets other session-only
+  state (taxiway/taxiway-point selection, the Hide All checkboxes, the Taxi
+  Path filter) rather than surgically patching just the parking-spot-related
+  collections — judged lower-risk than a hand-rolled partial refresh for a
+  first pass; worth revisiting if it proves annoying in practice.
+- Defensive fix bundled in: the Parking Spots grid gets `CanUserDeleteRows=
+  "False"` — previously unset, so WPF's own default row-delete-on-Delete-key
+  gesture was latent (a visually selected grid row could let the `DataGrid`
+  silently remove an item from `VisibleParkingSpotEdits`, a plain filtered
+  list never wired back to `Airport.ParkingSpots`, producing a confusing
+  transient state). Now Delete's only effect on this grid's data is via
+  diagram selection.
+- **Deliberately still out of scope:** adding parking spots (see the
+  amendment above).
+- **Backwards compatibility:** no persisted field was added, removed, or
+  reinterpreted.
+- Test coverage: `MainViewModelTests`
+  (`DeleteSelectedParkingSpotsCommand_CanExecute_TrueOnlyWhenASpotIsSelected`,
+  deleting a selected spot removes it from `Airport.ParkingSpots`/
+  `Diagram.ParkingSpots` and renumbers remaining `SourceIndex`es, deleting
+  cascades a matching `Type == Parking` path's removal while leaving other
+  paths untouched, a colliding non-unique `ItemIndex` does not cascade,
+  declining the confirmation via `FakeConfirmationService { ConfirmResult =
+  false }` leaves everything unchanged, deleting multiple selected spots at
+  once). The confirmation dialog's real WPF `MessageBox` and the Delete key
+  itself (real keyboard input) are not covered by automated tests — verified
+  manually, same category as the rest of this epic's mouse-input exclusions.
+- **Bug found and fixed via live manual testing:** the first live test showed
+  the diagram's zoom/pan resetting to fit-to-view on every delete, even
+  though every other live edit (moving a spot, renaming a taxiway, etc.)
+  leaves the current view untouched. Root cause: unlike those other edits,
+  which mutate shapes in place with no `DataContext` change at all, deletion
+  goes through `SetAirport(Airport)` (see above), which re-runs
+  `AirportDiagramProjector.Project` and hands `AirportDiagramView` a brand
+  new `AirportDiagram` instance — and
+  `AirportDiagramView`'s `DataContextChanged` handler unconditionally called
+  `FitToView()` on any such change, a fine assumption when it only ever fired
+  for a genuine new-airport load, but wrong once the same handler also fires
+  after an in-place structural edit to the airport currently being viewed.
+  **Fixed:** the handler now only re-fits when the old and new
+  `AirportDiagram`'s `ReferenceLatitude`/`ReferenceLongitude` differ (or the
+  old one was absent, i.e. a first load) — those are copied straight from
+  `AirportDetails.Latitude`/`Longitude` and never change for the same loaded
+  airport, so an exact match reliably distinguishes "still the same airport,
+  just refreshed" from "a different airport was loaded". **Known minor
+  residual limitation, accepted:** deleting a spot that was defining an edge
+  of the airport's bounding box can still shift the canvas origin slightly
+  (`AirportDiagramProjector.Project` recomputes `minX`/`minZ` from the
+  remaining shapes), nudging the preserved view a little even though the
+  zoom level itself is kept — far less disruptive than a full reset, and not
+  fixed here. Not covered by automated tests (real WPF `DataContextChanged`/
+  zoom state) — verified manually, same exclusion category as this view's
+  other mouse/zoom-input behavior.
+- **Bug found and fixed via live manual testing — real data corruption, not
+  just a UI glitch:** re-exporting OIBK after deleting a single, unrelated
+  parking spot and diffing the XML against an unedited baseline export
+  showed several TAXI-type `<TaxiwayPath>` elements — nowhere near the
+  deleted spot's own connecting path — silently losing their `name`
+  attribute, which the Scenery Editor reported as "Point not linked to main
+  graph" / "Not linked to a hold-short" on the taxi points those paths led
+  to. Root-caused (not guessed) by diffing an unedited `OIBK.xml` export
+  against a post-delete `OIBK_del.xml` export line-by-line: every affected
+  path had `name="1"` before the delete and no `name` attribute at all
+  after, even though `Airport.TaxiNames` is never touched by parking-spot
+  deletion. Cause: `MainViewModel.SetAirport` unconditionally
+  `TaxiNames.Clear()`+rebuilt the shared `TaxiNames`
+  `ObservableCollection` on every call — harmless on every other caller (a
+  genuine new-airport load, where the row seeing the transient clear belongs
+  to the previous airport's now-discarded `TaxiPathSegment` objects) but not
+  when `SetAirport` is reused after an in-place edit to the *same* loaded
+  airport (`DeleteSelectedParkingSpotsCommand`, see its own amendment
+  above): a `Clear()` fires a `CollectionChanged` Reset on `TaxiNamesPicker`,
+  which the Taxi Paths grid's Name `ComboBox` (two-way bound,
+  `SelectedValue="{Binding TaxiNameId, UpdateSourceTrigger=PropertyChanged}"`,
+  `MainWindow.xaml`) reacts to by clearing its own selection — and with that
+  trigger, immediately writes that `null` back into whatever
+  `TaxiPathSegment` a still-live (on-screen/virtualized) grid row's
+  `DataContext` currently wraps, which for a reused `AirportDetails` is the
+  *same, surviving* segment, not a discarded one. **Fixed:** extracted a
+  `SyncTaxiNames` helper that skips the rebuild entirely when
+  `airport.TaxiNames`' `Id` set/order already matches what's currently in
+  `TaxiNames` — grepped the rest of `MainViewModel` to confirm this is the
+  *only* place that `.Clear()`s a long-lived `ObservableCollection` exposed
+  to a two-way-bound `Selector`, so no other picker shares this exposure.
+  Regression-tested
+  (`MainViewModelTests.DeleteSelectedParkingSpots_DoesNotRebuildUnchangedTaxiNames`
+  — asserts the *same* `TaxiNameEditViewModel` instance survives a delete,
+  not merely an equal one, since instance identity is what determines
+  whether a `CollectionChanged` Reset fires; confirmed this test fails
+  against the pre-fix code before confirming it passes against the fix, per
+  this project's standard of proving a regression test actually catches the
+  bug it's named for). The real-WPF `ComboBox`-clears-selection mechanism
+  itself isn't covered by automated tests (requires live WPF binding/
+  virtualization) — verified against the actual reported bug via the XML
+  diff above, not merely reasoned about.
 
 ## v0.1+ — Generate SDK-compatible `<Airport>` XML
 
@@ -1719,7 +1849,7 @@ Investigated directly against the real OIBK debug JSON and exported XML:
 These are draft candidates surfaced by the research above, not approved user stories. Each needs to be broken into concrete acceptance criteria once prioritized.
 
 1. **Edit runway geometry/taxiway routing/parking data.** UI to modify runway surface/length, taxiway routing, and parking spot type/heading/radius. Taxi path naming/lighting and runway lighting (edge lights, VASI/PAPI, approach lights) are already committed above — this covers the rest of the original "Edit runway/taxiway/parking data" idea.
-   - **Follow-up: add/delete parking spots.** Deliberately left out of the parking spot editing amendment above. Adding needs new sim-unique `ItemIndex` values and taxi-path linking (a Parking-type path's `EndIndex` references a spot's `ItemIndex`), so it's a separate feature.
+   - **Follow-up: add parking spots.** Deliberately left out of the parking spot editing amendment above (**deleting** one is now committed — see its own amendment). Adding needs new sim-unique `ItemIndex` values and taxi-path linking (a Parking-type path's `EndIndex` references a spot's `ItemIndex`), so it's a separate feature.
    - **Follow-up: drag a parking spot with the mouse.** Also left out — Place-by-click is used instead, consistent with VASI/PAPI, and avoids competing with pan-drag.
 2. **Background map, phases 1–2 (satellite imagery + calibration).** Phase 0
    (OpenStreetMap tile layer, projection fix) is now committed above — see

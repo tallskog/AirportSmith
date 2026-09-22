@@ -16,6 +16,7 @@ public class MainViewModel : ViewModelBase
     private readonly IAirportProjectStore? _projectStore;
     private readonly IAirportXmlExporter? _xmlExporter;
     private readonly IMapTileService? _mapTileService;
+    private readonly IConfirmationService? _confirmationService;
 
     private string _icaoInput = string.Empty;
     private bool _isLoading;
@@ -408,8 +409,9 @@ public class MainViewModel : ViewModelBase
     public RelayCommand<ParkingSpotSelectionRequest> ToggleParkingSpotSelectionCommand { get; }
     public RelayCommand<ParkingSpotEditViewModel> ArmParkingPlacementCommand { get; }
     public RelayCommand<Point2D> PlaceParkingCommand { get; }
+    public RelayCommand DeleteSelectedParkingSpotsCommand { get; }
 
-    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null)
+    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null)
     {
         _simConnect = simConnect;
         _debugDataStore = debugDataStore;
@@ -417,6 +419,7 @@ public class MainViewModel : ViewModelBase
         _projectStore = projectStore;
         _xmlExporter = xmlExporter;
         _mapTileService = mapTileService;
+        _confirmationService = confirmationService;
         TaxiNamesPicker = new ReadOnlyObservableCollection<TaxiNameEditViewModel>(TaxiNames);
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => IsValidIcao(IcaoInput));
@@ -442,6 +445,7 @@ public class MainViewModel : ViewModelBase
         ToggleParkingSpotSelectionCommand = new RelayCommand<ParkingSpotSelectionRequest>(ToggleParkingSpotSelection, request => request != null);
         ArmParkingPlacementCommand = new RelayCommand<ParkingSpotEditViewModel>(ArmParkingPlacement, edit => edit != null);
         PlaceParkingCommand = new RelayCommand<Point2D>(PlaceParking, _ => _armedParkingPlacement != null);
+        DeleteSelectedParkingSpotsCommand = new RelayCommand(DeleteSelectedParkingSpots, () => Diagram != null && Diagram.ParkingSpots.Any(p => p.IsSelected));
         // A single long-lived object (unlike TaxiwayBatchEdit, which is
         // reset per selection, not per subscription) — subscribed once here
         // rather than per-SetAirport, so a filter typed before an airport is
@@ -501,10 +505,11 @@ public class MainViewModel : ViewModelBase
             RaiseParkingPlacementChanged();
         }
 
-        TaxiNames.Clear();
-        if (airport != null)
-            foreach (var name in airport.TaxiNames)
-                TaxiNames.Add(new TaxiNameEditViewModel(name));
+        // Skipped entirely when the Id set/order already matches — see
+        // SyncTaxiNames's own doc comment for why unconditionally
+        // Clear()-ing this collection (even when nothing about it actually
+        // changed) silently corrupts unrelated data.
+        SyncTaxiNames(airport);
 
         SubscribeDiagramSelection();
         SubscribeTaxiPathEdits();
@@ -526,6 +531,45 @@ public class MainViewModel : ViewModelBase
         ClearTaxiwaySelectionCommand.RaiseCanExecuteChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
         PlaceParkingCommand.RaiseCanExecuteChanged();
+    }
+
+    // Rebuilds TaxiNames (the shared, user-editable name list backing the
+    // Taxi Names panel AND every Taxi Paths grid row's Name ComboBox via
+    // TaxiNamesPicker) from airport.TaxiNames — but ONLY when the Id
+    // set/order has actually changed. Unconditionally Clear()-ing and
+    // re-Add()-ing this collection on every SetAirport call (the previous
+    // behavior) fires a CollectionChanged Reset on TaxiNamesPicker even when
+    // nothing about the names changed — and the Taxi Paths grid's Name
+    // ComboBox is two-way bound with UpdateSourceTrigger=PropertyChanged
+    // (SelectedValue="{Binding TaxiNameId, ...}", MainWindow.xaml). A
+    // ComboBox reacts to its ItemsSource momentarily having nothing matching
+    // its current selection by clearing SelectedValue, which — with that
+    // trigger — writes null straight back into whatever TaxiPathSegment the
+    // still-live grid row's DataContext currently wraps.
+    //
+    // On every OTHER SetAirport caller (a genuine new-airport load —
+    // LoadAsync/LoadFromFile/LoadProjectCommand) this was harmless: the row
+    // being momentarily cleared belongs to the PREVIOUS airport's
+    // TaxiPathSegment objects, discarded regardless. But SetAirport is now
+    // also called after an in-place structural edit to the SAME loaded
+    // airport (DeleteSelectedParkingSpotsCommand), where the "old" row wraps
+    // the SAME, SURVIVING TaxiPathSegment — permanently wiping its real
+    // TaxiNameId. Confirmed against a real OIBK export: deleting one
+    // unrelated parking spot silently cleared the exported `name` attribute
+    // off several on-screen taxi paths that had nothing to do with the
+    // deleted spot, orphaning their taxi points' visible names in the
+    // Scenery Editor. Skipping the rebuild when nothing changed avoids the
+    // whole failure mode rather than trying to out-race WPF's own
+    // virtualization/selection timing.
+    private void SyncTaxiNames(AirportDetails? airport)
+    {
+        var airportNames = airport?.TaxiNames ?? [];
+        if (airportNames.Count == TaxiNames.Count && airportNames.Select(n => n.Id).SequenceEqual(TaxiNames.Select(vm => vm.Id)))
+            return;
+
+        TaxiNames.Clear();
+        foreach (var name in airportNames)
+            TaxiNames.Add(new TaxiNameEditViewModel(name));
     }
 
     private void SubscribeParkingSpotEdits()
@@ -643,6 +687,55 @@ public class MainViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(IsParkingPlacementArmed));
         OnPropertyChanged(nameof(ParkingPlacementStatusText));
+    }
+
+    // Deletes every currently-selected parking spot (diagram click/Ctrl+click
+    // selection — see ToggleParkingSpotSelection), after confirming with the
+    // user first (no undo, and this is triggered by a Delete keypress — much
+    // easier to hit by accident than a button click). Also removes any
+    // Type==Parking taxi path whose EndIndex references a deleted spot's
+    // ItemIndex, since a path left pointing at a spot that no longer exists
+    // is genuinely invalid data — unlike DeleteTaxiName's "detach, don't
+    // cascade" precedent, which works because a taxi name has a valid "no
+    // name" state that a parking path's endpoint doesn't.
+    private void DeleteSelectedParkingSpots()
+    {
+        if (Airport is null || Diagram is null) return;
+
+        var selectedPositions = Diagram.ParkingSpots.Where(p => p.IsSelected).Select(p => p.SourceIndex).ToList();
+        if (selectedPositions.Count == 0) return;
+
+        var message = selectedPositions.Count == 1
+            ? "Delete 1 parking spot? Any taxi path connecting to it will be deleted too."
+            : $"Delete {selectedPositions.Count} parking spots? Any taxi path connecting to them will be deleted too.";
+        if (_confirmationService != null && !_confirmationService.Confirm(message)) return;
+
+        // Only cascade-delete paths for spots whose ItemIndex is actually
+        // unique among the airport's spots — same guard
+        // ParkingSpotEditViewModel.BuildAll uses, since a colliding
+        // ItemIndex (pre-ItemIndex-migration/legacy data) can't be safely
+        // attributed to just the spot being deleted here.
+        var indexCounts = Airport.ParkingSpots.GroupBy(s => s.ItemIndex).ToDictionary(g => g.Key, g => g.Count());
+        var itemIndexesToCascade = selectedPositions
+            .Select(i => Airport.ParkingSpots[i].ItemIndex)
+            .Where(itemIndex => indexCounts.GetValueOrDefault(itemIndex) == 1)
+            .ToHashSet();
+
+        Airport.TaxiPaths.RemoveAll(p => p.Type == TaxiPathType.Parking && itemIndexesToCascade.Contains(p.EndIndex));
+
+        // Descending, so removing one position doesn't shift the meaning of
+        // any position still to be removed.
+        foreach (var position in selectedPositions.OrderByDescending(i => i))
+            Airport.ParkingSpots.RemoveAt(position);
+
+        // Rebuilds Diagram/ParkingSpotEdits/TaxiPathEdits/every filter and
+        // subscription from the mutated Airport — the same path every
+        // airport load/reload already uses (SetAirport's own doc comment).
+        // Also resets other session-only state (taxiway/point selection,
+        // Hide All checkboxes, the Taxi Path filter) as a known, accepted
+        // side effect rather than hand-patching every derived collection
+        // surgically for this first pass.
+        SetAirport(Airport);
     }
 
     // Every TaxiwaySegmentShape's IsSelected is mutable (see its own doc

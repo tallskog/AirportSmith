@@ -106,6 +106,18 @@ public class MainViewModelTests
         return vm;
     }
 
+    // Same as above, plus an injected confirmation service — for the
+    // parking-spot delete tests, which need to control/observe the Yes/No
+    // prompt.
+    private static MainViewModel CreateViewModelWithAirport(AirportDetails airport, IConfirmationService confirmationService)
+    {
+        var store = new FakeAirportProjectStore();
+        store.Save(airport);
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store, confirmationService: confirmationService) { IcaoInput = airport.Icao };
+        vm.LoadProjectCommand.Execute(null);
+        return vm;
+    }
+
     [Fact]
     public async Task LoadCommand_Success_PopulatesAirportAndClearsError()
     {
@@ -1551,5 +1563,139 @@ public class MainViewModelTests
         Assert.False(vm.IsParkingPlacementArmed);
         Assert.False(vm.HideAllParkingSpots);
         Assert.All(vm.Diagram!.ParkingSpots, s => Assert.True(s.IsVisible));
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpotsCommand_CanExecute_TrueOnlyWhenASpotIsSelected()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots());
+        Assert.False(vm.DeleteSelectedParkingSpotsCommand.CanExecute(null));
+
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+        Assert.True(vm.DeleteSelectedParkingSpotsCommand.CanExecute(null));
+
+        vm.ClearTaxiwaySelectionCommand.Execute(null);
+        Assert.False(vm.DeleteSelectedParkingSpotsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_RemovesSpot_AndRenumbersRemaining()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots(), new FakeConfirmationService());
+        // Number=2, ItemIndex=1.
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[1], false));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        Assert.Equal(2, vm.Airport!.ParkingSpots.Count);
+        Assert.Equal([1, 3], vm.Airport.ParkingSpots.Select(s => s.Number));
+        Assert.Equal(2, vm.Diagram!.ParkingSpots.Count);
+        Assert.Equal([0, 1], vm.Diagram.ParkingSpots.Select(s => s.SourceIndex));
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_CascadesLinkedParkingPath_LeavesOtherPathsUntouched()
+    {
+        var airport = BuildAirportWithThreeParkingSpots();
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Parking, EndIndex = 1 }); // linked to the spot being deleted
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Parking, EndIndex = 2 }); // linked to a different spot
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, EndIndex = 1 }); // same EndIndex, not a Parking-type path
+        var vm = CreateViewModelWithAirport(airport, new FakeConfirmationService());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[1], false));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        Assert.Equal(2, vm.Airport!.TaxiPaths.Count);
+        Assert.DoesNotContain(vm.Airport.TaxiPaths, p => p.Type == TaxiPathType.Parking && p.EndIndex == 1);
+        Assert.Contains(vm.Airport.TaxiPaths, p => p.Type == TaxiPathType.Parking && p.EndIndex == 2);
+        Assert.Contains(vm.Airport.TaxiPaths, p => p.Type == TaxiPathType.Taxi && p.EndIndex == 1);
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_CollidingItemIndex_DoesNotCascadeDeleteLinkedPath()
+    {
+        var airport = new AirportDetails { Icao = "EFHK", Latitude = 0, Longitude = 0 };
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 0, Number = 1, RadiusMeters = 10 });
+        airport.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 0, Number = 2, RadiusMeters = 10 }); // collides with spot 0's ItemIndex
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Parking, EndIndex = 0 });
+        var vm = CreateViewModelWithAirport(airport, new FakeConfirmationService());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        Assert.Single(vm.Airport!.ParkingSpots); // the other, colliding-ItemIndex spot survives
+        Assert.Single(vm.Airport.TaxiPaths); // left untouched despite EndIndex matching the deleted spot's (non-unique) ItemIndex
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_DeclinedConfirmation_LeavesEverythingUnchanged()
+    {
+        var confirmation = new FakeConfirmationService { ConfirmResult = false };
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots(), confirmation);
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        Assert.Equal(3, vm.Airport!.ParkingSpots.Count);
+        Assert.Equal(1, confirmation.CallCount);
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_MultipleSelected_RemovesAllOfThem()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots(), new FakeConfirmationService());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram.ParkingSpots[2], true));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        var remaining = Assert.Single(vm.Airport!.ParkingSpots);
+        Assert.Equal(2, remaining.Number);
+    }
+
+    // Regression test for a real bug found via a live OIBK export/import:
+    // deleting one parking spot silently cleared the resolved TaxiNameId off
+    // several unrelated taxi paths (visible in the exported XML as a missing
+    // `name` attribute, which the Scenery Editor treated as a "not linked"
+    // point). Root cause was in SetAirport/SyncTaxiNames, not the delete
+    // logic itself — see SyncTaxiNames's own doc comment for the mechanism
+    // (a two-way-bound ComboBox's ItemsSource being unconditionally reset
+    // even when TaxiNames hadn't actually changed). This proves the fix at
+    // the level that matters: SetAirport must not touch the TaxiNames
+    // collection's items at all when nothing about them changed.
+    [Fact]
+    public void DeleteSelectedParkingSpots_DoesNotRebuildUnchangedTaxiNames()
+    {
+        var airport = BuildAirportWithThreeParkingSpots();
+        var taxiName = new TaxiName { Value = "A" };
+        airport.TaxiNames.Add(taxiName);
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = taxiName.Id });
+        var vm = CreateViewModelWithAirport(airport, new FakeConfirmationService());
+        var originalTaxiNameViewModel = vm.TaxiNames.Single();
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+
+        // Same instance, not just an equal one — proves TaxiNames was never
+        // cleared/rebuilt, which is what would fire the CollectionChanged
+        // Reset a live ComboBox reacts to.
+        Assert.Same(originalTaxiNameViewModel, vm.TaxiNames.Single());
+        Assert.Equal(taxiName.Id, vm.Airport!.TaxiPaths.Single(p => p.Type == TaxiPathType.Taxi).TaxiNameId);
+    }
+
+    [Fact]
+    public void DeleteSelectedParkingSpots_ConfirmationMessage_ReflectsSelectedCount()
+    {
+        var confirmation = new FakeConfirmationService();
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots(), confirmation);
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+        vm.DeleteSelectedParkingSpotsCommand.Execute(null);
+        Assert.Contains("1 parking spot", confirmation.LastMessage);
+
+        var vm2 = CreateViewModelWithAirport(BuildAirportWithThreeParkingSpots(), confirmation);
+        vm2.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm2.Diagram!.ParkingSpots[0], false));
+        vm2.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm2.Diagram.ParkingSpots[1], true));
+        vm2.DeleteSelectedParkingSpotsCommand.Execute(null);
+        Assert.Contains("2 parking spots", confirmation.LastMessage);
     }
 }
