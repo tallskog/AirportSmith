@@ -371,6 +371,88 @@ X-Plane Gateway `apt.dat` overlay on the same diagram).
   demarcation bar/chevrons) are grounded directly in FAA AIM 2-3-3, not a
   guess — see the Reference material link at the top of this file.
 
+## v0.1+ — OpenStreetMap tile layer behind the diagram (phase 0)
+
+**User story:** As a user, I can optionally show an OpenStreetMap layer behind
+the Diagram tab's and Edit tab's airport rendering — off by default, one click
+to turn on — so I can visually cross-check the airport's runway/taxiway layout
+against real-world imagery (and, as a side effect, sanity-check the
+still-UNCONFIRMED `BIAS_X`/`BIAS_Z` axis convention against real terrain, see
+the diagram-rendering section above). This is phase 0 of the map/satellite
+underlay researched in [`background-map-research.md`](background-map-research.md);
+phases 1 (satellite imagery) and 2 (per-airport offset calibration + map-mode
+styling) remain draft, below.
+
+**Acceptance criteria:**
+- A "Show map" checkbox is visible on both the Diagram tab and the Edit tab
+  whenever an airport is loaded, unchecked by default every time the app
+  starts (not persisted across restarts or in the project file — a
+  session-only view preference for this phase). Both checkboxes reflect the
+  same shared toggle.
+- Checking it starts loading OpenStreetMap standard tiles behind the existing
+  runway/taxiway/parking rendering, sized and positioned from the airport's
+  own reference lat/lon (`AirportDiagram.ReferenceLatitude`/`ReferenceLongitude`)
+  so real-world features line up with the diagram's own shapes; unchecking it
+  removes the tile layer immediately (any in-flight tile requests are
+  discarded on arrival, not cancelled).
+- Only tiles currently visible in the viewport are ever requested — panning or
+  zooming loads newly-visible tiles and never fetches tiles for the whole
+  airport up front (no bulk/prefetch download, per OSM's usage policy).
+- Every outbound tile request sends a unique `User-Agent` identifying
+  AirportSmith (never a default HttpClient/library User-Agent). The tile
+  endpoint (`tile.openstreetmap.org`) and User-Agent string are spike-only
+  choices flagged in code as needing revisiting (a real contact string, and
+  possibly a different endpoint) before the app is distributed beyond the
+  author's own manual testing — OSMF's usage policy discourages third-party
+  desktop apps hitting their tile server at scale without prior arrangement.
+- "© OpenStreetMap contributors" is shown visibly over the map whenever the
+  layer is on.
+- A previously-fetched tile is served from a local disk cache
+  (`%LocalAppData%\AirportSmith[-dev]\MapTiles`) for at least 7 days before
+  being eligible for re-fetch, honoring a longer `Cache-Control: max-age` from
+  the server when present; a cached tile renders with no network access
+  needed.
+- A tile that fails to load (network error, non-2xx response) is simply not
+  drawn — no error dialog, no crash, the rest of the diagram renders
+  normally.
+- Turning the map on/off, panning, and zooming while it's on never freezes or
+  visibly stutters the UI (tile fetches are asynchronous).
+- Given no airport is loaded, the checkbox has no effect / is not shown (same
+  "empty, no exception" rule as the rest of the Diagram tab).
+- `GeoProjection`'s local-meters projection is corrected to use WGS84
+  meridian/prime-vertical radii of curvature at the reference latitude
+  (replacing the previous flat equatorial constant), so a map tile several
+  kilometers from the airport's reference point lines up correctly — this
+  also very slightly improves runway placement accuracy at low-latitude
+  airports. `ProjectLatLon`/`UnprojectLocalPoint` remain exact inverses of
+  each other after the fix (pinned by test, not just informally true).
+
+**Explicitly out of scope for this phase** (see the draft phase 1/2 entry
+below): satellite imagery, any settings/API-key store, a per-airport manual
+offset/opacity control, and persisting the "Show map" toggle.
+
+**Test coverage:** `GeoProjectionTests` — the existing round-trip/
+reference-point cases stay valid (the fix preserves exact-inverse behavior),
+plus new absolute-accuracy cases asserting a 1° lat/lon offset matches known
+WGS84 meridian/prime-vertical meters-per-degree values at several latitudes
+(the previous suite only pinned round-trip consistency, not absolute
+accuracy). `MapTileMathTests` — hand-calculated Web Mercator tile math
+(lat/lon↔tile, zoom selection, tile screen-rect placement, visible-tile-set
+computation). `MapTileDiskCacheTests` — round-trip, the 7-day retention floor
+is honored even with no/a shorter server `max-age`, a longer server `max-age`
+is honored, expiry returns a cache miss; always via an explicit temp base
+directory, never `AppDataHelper.AppDataPath` (per CLAUDE.md's guardrail).
+`MapTileServiceTests` — cache-then-fetch composition via fakes (cache hit
+skips the source; cache miss fetches and stores; a source failure returns
+null without storing). `MainViewModelTests` — `IsMapAvailable` reflects
+whether a tile service was injected; `ShowMap` defaults to false and raises
+`PropertyChanged`. `AirportDiagramProjectorTests` — a new fact confirms
+`ReferenceLatitude`/`ReferenceLongitude` are set from the airport. Real
+network behavior, the on-disk tile cache's real file I/O, and the tile
+layer's on-screen rendering/pan/zoom responsiveness are verified manually per
+CLAUDE.md's testing policy — not covered by `dotnet test`, consistent with
+this diagram's existing zoom/pan handling above.
+
 ## v0.1+ — Raw airport data inspector (Airport Data tab)
 
 **User story:** As a user, after loading an airport, I can open an "Airport Data"
@@ -1639,7 +1721,25 @@ These are draft candidates surfaced by the research above, not approved user sto
 1. **Edit runway geometry/taxiway routing/parking data.** UI to modify runway surface/length, taxiway routing, and parking spot type/heading/radius. Taxi path naming/lighting and runway lighting (edge lights, VASI/PAPI, approach lights) are already committed above — this covers the rest of the original "Edit runway/taxiway/parking data" idea.
    - **Follow-up: add/delete parking spots.** Deliberately left out of the parking spot editing amendment above. Adding needs new sim-unique `ItemIndex` values and taxi-path linking (a Parking-type path's `EndIndex` references a spot's `ItemIndex`), so it's a separate feature.
    - **Follow-up: drag a parking spot with the mouse.** Also left out — Place-by-click is used instead, consistent with VASI/PAPI, and avoids competing with pan-drag.
-2. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
+2. **Background map, phases 1–2 (satellite imagery + calibration).** Phase 0
+   (OpenStreetMap tile layer, projection fix) is now committed above — see
+   [`background-map-research.md`](background-map-research.md) for the full
+   findings. Still draft/open:
+   - **Phase 1 — satellite.** User supplies their own Esri (ArcGIS Location
+     Platform, 2M free tiles/month) or Mapbox (750k free/month) key; needs a
+     new app-level settings store (`%LocalAppData%\AirportSmith[-dev]\settings.json`,
+     never committed) and a provider abstraction behind `IMapTileSource` so
+     OSM/Esri/Mapbox are interchangeable. Not verified: whether each
+     provider's terms allow deriving positions from imagery.
+   - **Phase 2 — calibration.** Per-airport manual offset nudge + opacity
+     control, persisted as additive `AirportProjectFile`/`AirportDetails`
+     fields (back-compat rules apply, needs a load test); existing diagram
+     styling (opaque runway fill, `#33808080` taxiway bands, thin
+     centerlines) assumes a white background and needs a legibility review
+     over imagery.
+   - **Open decision carried forward:** does the user already have an Esri or
+     Mapbox account, or should phase 1 default to Esri?
+3. **Package/build flow.** Either hand off the generated project to the SDK's Dev Mode / PackageTool for the user to build, or shell out to `fspackagetool` directly to produce a Community-folder package.
 
 ## Test coverage
 - `MainViewModelTests` (`AirportSmith.Tests`) covers: successful load populates
@@ -1975,3 +2075,101 @@ export-mapping bug):
 - Actually importing the generated XML into the MSFS 2024 SDK Dev Mode
   Scenery Editor (or compiling it with `bglcomp`) is not covered by automated
   tests (requires MSFS/the SDK) — verified manually.
+
+### Amendment: OpenStreetMap tile layer behind the diagram (phase 0)
+
+Implements the phase-0 committed epic above (`v0.1+ — OpenStreetMap tile
+layer behind the diagram (phase 0)`) — see that section for the user
+story/acceptance criteria and `background-map-research.md` for the full
+research behind it.
+
+- `GeoProjectionTests` — the previous entry above only pinned round-trip
+  consistency (`ProjectLatLon`/`UnprojectLocalPoint` invert each other),
+  which the new WGS84-based formula still satisfies unchanged (same 4
+  `InlineData` cases and 2 reference-point facts pass with no modification).
+  Added `ProjectLatLon_OneDegreeOffset_MatchesKnownWgs84MetersPerDegree`
+  (asserts a 1° lat/lon offset at 4 representative latitudes against
+  independently-computed WGS84 meridian/prime-vertical meters-per-degree
+  values, pinning *absolute* accuracy for the first time) and
+  `ProjectLatLon_AtNonEquatorialLatitude_DiffersFromOldFlatEquatorialConstant`
+  (regression guard against reverting to the old flat `111_320` constant).
+  Ripple-checked: the full suite (`AirportDiagramProjectorTests`,
+  `AirportXmlExporterTests`) still passes unmodified after the fix — their
+  hand-calculated fixtures use `Latitude = 0`, where the new formula's delta
+  from the old constant is sub-millimeter, within existing tolerances.
+- `AirportDiagramProjectorTests.Project_SetsReferenceLatitudeLongitude_FromAirport`
+  confirms the new `AirportDiagram.ReferenceLatitude`/`ReferenceLongitude`
+  fields come through from `AirportDetails.Latitude`/`Longitude`.
+- `MapTileMathTests` (`AirportSmith.Tests`, pure/no fakes) covers:
+  `LatLonToTileFraction`/`LatLonToTile`/`TileToLatLon`/`MetersPerPixel` each
+  against hand-computed values (from the published Web Mercator slippy-map
+  formulas, not by running the code under test); `SelectZoom` picks an exact
+  match and clamps to `MinZoom`/`MaxZoom` at extreme scales; `GetVisibleTiles`
+  returns exactly one tile for a zero-area viewport inside it, exactly the
+  expected four for a viewport spanning four tile centers, and is capped at
+  `MaxVisibleTiles` for a viewport covering the whole world.
+- `MapTileDiskCacheTests` (`AirportSmith.Tests`, real file I/O against an
+  explicit temp directory — never `AppDataHelper.AppDataPath`, per
+  `CLAUDE.md`'s guardrail, same pattern as `AirportProjectStoreTests`) covers:
+  an uncached tile returns null; store-then-get round-trips the same bytes;
+  a tile with no `Cache-Control` header is still served within the 7-day
+  retention floor; a short server `max-age` doesn't shorten that floor; a
+  longer server `max-age` is honored past the floor; a tile past both its
+  `max-age` and the floor returns null (re-fetch expected).
+- `MapTileServiceTests` (`AirportSmith.Tests`, via `Fakes/FakeMapTileSource`/
+  `Fakes/FakeMapTileCache`) covers the cache-then-fetch composition: a cache
+  hit never calls the source; a cache miss fetches from the source and stores
+  the result; a source failure returns null without storing anything.
+- `MainViewModelTests` — `IsMapAvailable_ReflectsWhetherMapTileServiceWasInjected`
+  and `ShowMap_DefaultsFalse_AndRaisesPropertyChangedWhenSet` (via
+  `Fakes/FakeMapTileService`), same pattern as the existing
+  `IsXmlExportAvailable`/`IsDevModeExportAvailable` availability tests.
+- Not covered by automated tests, verified manually per `CLAUDE.md`'s testing
+  policy (same category as the existing zoom/pan-interaction exclusion
+  above): `AirportDiagramView`'s actual tile rendering and the debounced
+  refresh timer (real WPF), and `OsmMapTileSource`'s real HTTP behavior
+  (requires live network access and cannot assert on a third party's actual
+  tile content/response codes from a unit test).
+- **Bugs found via live manual testing — two, both fixed:** the first live
+  test (a real loaded airport, "Show map" checked) showed only one small,
+  wrongly-placed tile, and a different single tile each time the diagram was
+  zoomed, rather than a coherent map filling the viewport. `MapTileMath`'s own
+  tile placement/sizing math checked out correctly against hand-computed and
+  realistic-viewport values (see `MapTileMathTests` above), so two separate
+  causes were pursued:
+  1. A single pan/zoom makes many tiles newly visible at once (a realistic
+     800×600 fit-to-view viewport needs ~16), and
+     `AirportDiagramView.RefreshVisibleTilesAsync` requested every one of them
+     from `MapTileService` **concurrently, with no cap** — plausible to leave
+     only one or two tiles rendering if OSM's real tile server throttled the
+     burst (indistinguishable from an ordinary failed fetch, since
+     `IMapTileSource`'s contract already treats any failure as "just don't
+     draw it"). **Fixed:** `MapTileService.GetTileAsync` now serializes its
+     own work through a `SemaphoreSlim` capped at 2 concurrent operations —
+     the classic "per-host connection" convention most polite tile-consuming
+     desktop clients use. Regression-tested
+     (`MapTileServiceTests.GetTileAsync_ManyConcurrentRequests_NeverExceedsConcurrencyCap`).
+     Good practice and moves the app closer to OSM's own tile usage policy
+     regardless, but **re-testing against the same live session showed the
+     exact same symptom, unchanged** — this alone wasn't the (or the whole)
+     cause.
+  2. The actual cause: `MapTiles`'s `DataTemplate` positioned each tile
+     `<Image>` via `Canvas.Left`/`Canvas.Top` attached properties on the
+     template root — the exact same pattern already documented as **confirmed
+     broken** for the `TaxiwayPoints` template earlier in this section (every
+     one of 381 items rendering stacked at the same (0,0)-ish spot instead of
+     its own position, root cause never identified, worked around with an
+     absolute-coordinate `Path`/`EllipseGeometry` instead). `MapTiles` hit the
+     identical symptom: every fetched tile image rendering stacked near
+     canvas-origin regardless of its real position, which is why only one
+     (whichever loaded last) was ever visible, in the wrong place, changing
+     with every zoom (a different real-world tile, still misplaced). **Fixed**
+     the same way `TaxiwayPoints` was: each tile is now a `Path` with an
+     absolute-coordinate `RectangleGeometry` filled with an `ImageBrush`,
+     instead of `Canvas.Left`/`Top` + `Width`/`Height` on an `<Image>` —
+     `MapTileViewModel` now exposes `Fill`/`Rect` instead of
+     `Image`/`Left`/`Top`/`Width`/`Height`. **Not yet re-confirmed against a
+     live session** — this is the fix expected to actually resolve the
+     originally-reported symptom; the concurrency cap above should still make
+     the fill-in visibly progressive (tiles appearing a couple at a time)
+     rather than all at once.

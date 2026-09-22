@@ -1,6 +1,7 @@
 <UserControl x:Class="AirportSmith.Controls.AirportDiagramView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:AirportSmith.Controls"
              MouseWheel="OnMouseWheel"
              MouseLeftButtonDown="OnMouseLeftButtonDown"
              MouseLeftButtonUp="OnMouseLeftButtonUp"
@@ -90,8 +91,13 @@
     </UserControl.Resources>
 
     <!-- Border carries the background so empty space around the diagram is
-         still hit-testable for pan/zoom, and clips the transformed canvas. -->
+         still hit-testable for pan/zoom, and clips the transformed canvas. A
+         Grid (rather than the Border hosting DiagramCanvas directly) lets the
+         OSM attribution text sit on top, OUTSIDE DiagramCanvas's own
+         RenderTransform, so it stays fixed/legible at any zoom/pan instead of
+         scaling and panning away with the map tiles underneath it. -->
     <Border Background="White" ClipToBounds="True">
+        <Grid>
         <Canvas x:Name="DiagramCanvas"
                 Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}"
                 HorizontalAlignment="Left" VerticalAlignment="Top">
@@ -103,6 +109,35 @@
                     <TranslateTransform x:Name="DiagramTranslate"/>
                 </TransformGroup>
             </Canvas.RenderTransform>
+
+            <!-- OSM tile layer - first child so every shape below draws on top
+                 of it. IsHitTestVisible=False keeps click-select/pan handling
+                 (TaxiwayShape_MouseLeftButtonDown etc.) unaffected. ItemsSource
+                 is set in code-behind (RefreshVisibleTilesAsync), not bound
+                 here, since it's driven by ShowMap/MapTileService rather than
+                 the AirportDiagram DataContext every other ItemsControl below
+                 binds against. Populated only while ShowMap is true - see
+                 requirements.md's phase-0 "OpenStreetMap tile layer" entry.
+
+                 Each tile is a Path with an absolute-coordinate
+                 RectangleGeometry, not Canvas.Left/Top on the template root -
+                 see MapTileViewModel's doc comment for why (the same
+                 confirmed-broken pattern/fix as the TaxiwayPoints template
+                 below). -->
+            <ItemsControl x:Name="MapTiles" IsHitTestVisible="False">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Path Fill="{Binding Fill}">
+                            <Path.Data>
+                                <RectangleGeometry Rect="{Binding Rect}"/>
+                            </Path.Data>
+                        </Path>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
             <ItemsControl ItemsSource="{Binding Runways}">
                 <ItemsControl.ItemsPanel>
@@ -379,5 +414,15 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </Canvas>
+
+        <!-- OSM's tile usage policy requires attribution to be visible
+             whenever the map layer is shown - see requirements.md's phase-0
+             "OpenStreetMap tile layer" entry. Outside DiagramCanvas (a Grid
+             sibling, not a Canvas child) so it never scales/pans with the
+             tiles beneath it. -->
+        <TextBlock Text="© OpenStreetMap contributors" FontSize="10" Padding="4,2" Background="#CCFFFFFF"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4"
+                   Visibility="{Binding ShowMap, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}, Converter={StaticResource BoolToVisibility}}"/>
+        </Grid>
     </Border>
 </UserControl>

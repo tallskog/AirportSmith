@@ -30,7 +30,16 @@ public partial class App : Application
         var projectStore = new AirportProjectStore();
         var xmlExporter = new AirportXmlExporter();
 
-        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter);
+        // The map tile service is cheap/inert until MainViewModel.ShowMap is
+        // toggled on — constructing it here does not itself make a network
+        // call. SPIKE-ONLY endpoint/User-Agent — see OsmMapTileSource's own
+        // doc comment for why this must be revisited before the app is
+        // distributed beyond the author's own manual testing.
+        IMapTileSource mapTileSource = new OsmMapTileSource(userAgent: "AirportSmith/0.1 (dev build)");
+        IMapTileCache mapTileCache = new MapTileDiskCache();
+        IMapTileService mapTileService = new MapTileService(mapTileSource, mapTileCache);
+
+        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService);
         var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();

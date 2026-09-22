@@ -897,4 +897,19 @@ public class AirportDiagramProjectorTests
         Assert.Equal(12, biasX, Precision);
         Assert.Equal(7, biasZ, Precision);
     }
+
+    [Fact]
+    public void Project_SetsReferenceLatitudeLongitude_FromAirport()
+    {
+        var airport = Airport(a =>
+        {
+            a.Latitude = 47.4502;
+            a.Longitude = 8.5616;
+        });
+
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.Equal(47.4502, diagram.ReferenceLatitude, Precision);
+        Assert.Equal(8.5616, diagram.ReferenceLongitude, Precision);
+    }
 }

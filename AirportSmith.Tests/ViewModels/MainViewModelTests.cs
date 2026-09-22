@@ -959,6 +959,28 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void IsMapAvailable_ReflectsWhetherMapTileServiceWasInjected()
+    {
+        Assert.False(new MainViewModel(new FakeSimConnectService()).IsMapAvailable);
+        Assert.True(new MainViewModel(new FakeSimConnectService(), mapTileService: new FakeMapTileService()).IsMapAvailable);
+    }
+
+    [Fact]
+    public void ShowMap_DefaultsFalse_AndRaisesPropertyChangedWhenSet()
+    {
+        var vm = new MainViewModel(new FakeSimConnectService(), mapTileService: new FakeMapTileService());
+        Assert.False(vm.ShowMap);
+
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.ShowMap = true;
+
+        Assert.True(vm.ShowMap);
+        Assert.Contains(nameof(MainViewModel.ShowMap), raised);
+    }
+
+    [Fact]
     public void ExportXmlCommand_CanExecute_FalseUntilAirportLoaded()
     {
         var vm = new MainViewModel(new FakeSimConnectService(), fileDialogService: new FakeFileDialogService(), xmlExporter: new FakeAirportXmlExporter());

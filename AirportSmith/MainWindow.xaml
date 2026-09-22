@@ -82,8 +82,21 @@
                 <DataGrid ItemsSource="{Binding Jetways}" AutoGenerateColumns="True" IsReadOnly="True" Margin="10"/>
             </TabItem>
             <TabItem Header="Diagram">
-                <controls:AirportDiagramView Margin="10"
-                                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                <DockPanel Margin="10">
+                    <!-- Off by default (MainViewModel.ShowMap) - the app's
+                         first outbound network call, see requirements.md's
+                         phase-0 "OpenStreetMap tile layer" entry. Only
+                         visible once a map tile service was actually wired up
+                         (IsMapAvailable), same convention as
+                         IsProjectStoreAvailable/IsXmlExportAvailable. -->
+                    <CheckBox DockPanel.Dock="Top" Content="Show map (OpenStreetMap)" Margin="0,0,0,8"
+                              IsChecked="{Binding ShowMap}"
+                              Visibility="{Binding IsMapAvailable, Converter={StaticResource BoolToVisibility}}"/>
+                    <controls:AirportDiagramView
+                        DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
+                        MapTileService="{Binding DataContext.MapTileService, RelativeSource={RelativeSource AncestorType=Window}}"
+                        ShowMap="{Binding DataContext.ShowMap, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                </DockPanel>
             </TabItem>
             <TabItem Header="Airport Data">
                 <!-- Raw, expandable dump of every field on the loaded AirportDetails
@@ -663,6 +676,8 @@
                     <Grid Grid.Column="1" x:Name="EditDiagramHost">
                         <controls:AirportDiagramView
                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
+                            MapTileService="{Binding DataContext.MapTileService, RelativeSource={RelativeSource AncestorType=Window}}"
+                            ShowMap="{Binding DataContext.ShowMap, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayClickCommand="{Binding DataContext.ToggleTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayClearSelectionCommand="{Binding DataContext.ClearTaxiwaySelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             TaxiwayContextMenuCommand="{Binding DataContext.OpenTaxiwayBatchEditCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -670,6 +685,16 @@
                             VasiPlacementCommand="{Binding DataContext.PlaceVasiCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             ParkingSpotClickCommand="{Binding DataContext.ToggleParkingSpotSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             ParkingPlacementCommand="{Binding DataContext.PlaceParkingCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+                        <!-- Same shared toggle as the Diagram tab's checkbox (MainViewModel.ShowMap) —
+                             duplicated here so it's reachable without switching tabs; both reflect
+                             and control the same session-only, off-by-default state. -->
+                        <Border Background="#CCFFFFFF" CornerRadius="4" Padding="6,3"
+                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,4,0,0"
+                                Visibility="{Binding DataContext.IsMapAvailable, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                            <CheckBox Content="Show map (OpenStreetMap)"
+                                      IsChecked="{Binding DataContext.ShowMap, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                        </Border>
 
                         <!-- Shown only while a VASI/PAPI slot is armed for click-to-place
                              (see MainViewModel.VasiPlacementStatusText/ArmVasiPlacementCommand

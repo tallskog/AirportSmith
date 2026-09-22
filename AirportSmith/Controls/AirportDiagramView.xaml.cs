@@ -1,7 +1,13 @@
+using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using AirportSmith.Models.Diagram;
+using AirportSmith.Services;
 
 namespace AirportSmith.Controls;
 
@@ -107,6 +113,52 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(ParkingPlacementCommandProperty, value);
     }
 
+    // The map-tile fetch/cache boundary (see IMapTileService's doc comment) -
+    // null on the Diagram/Edit tab's shared MainViewModel.MapTileService when
+    // it wasn't constructed (never expected in practice, but kept nullable so
+    // this view degrades to "no map" rather than throwing). Bound from
+    // MainWindow.xaml alongside ShowMap below.
+    public static readonly DependencyProperty MapTileServiceProperty =
+        DependencyProperty.Register(nameof(MapTileService), typeof(IMapTileService), typeof(AirportDiagramView));
+
+    public IMapTileService? MapTileService
+    {
+        get => (IMapTileService?)GetValue(MapTileServiceProperty);
+        set => SetValue(MapTileServiceProperty, value);
+    }
+
+    // Off by default (see MainViewModel.ShowMap's own doc comment - a
+    // session-only preference, opt-in since turning it on is this app's first
+    // outbound network call). Toggling it immediately refreshes/clears the
+    // tile layer rather than waiting for the next pan/zoom.
+    public static readonly DependencyProperty ShowMapProperty =
+        DependencyProperty.Register(nameof(ShowMap), typeof(bool), typeof(AirportDiagramView),
+            new PropertyMetadata(false, OnShowMapChanged));
+
+    public bool ShowMap
+    {
+        get => (bool)GetValue(ShowMapProperty);
+        set => SetValue(ShowMapProperty, value);
+    }
+
+    private static void OnShowMapChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not AirportDiagramView view) return;
+
+        if ((bool)e.NewValue)
+        {
+            _ = view.RefreshVisibleTilesAsync();
+        }
+        else
+        {
+            // Any in-flight fetch that completes after this just has its
+            // result discarded on arrival (LoadTileAsync re-checks ShowMap) -
+            // no cancellation plumbing for this phase, see
+            // background-map-research.md's phase-0 scope.
+            view._mapTiles.Clear();
+        }
+    }
+
     private const double ZoomStep = 1.15;
 
     // A mouse-down/mouse-up pair with less movement than this (device-
@@ -127,16 +179,166 @@ public partial class AirportDiagramView : UserControl
     private double _panStartTranslateX;
     private double _panStartTranslateY;
 
+    // Currently-shown OSM tiles, bound to MapTiles.ItemsSource in code
+    // (constructor) rather than XAML, since it's driven by ShowMap/
+    // MapTileService rather than the AirportDiagram DataContext every other
+    // ItemsControl in this view binds against.
+    private readonly ObservableCollection<MapTileViewModel> _mapTiles = [];
+
+    // Tile ids with a fetch already in flight, so a rapid succession of
+    // RefreshVisibleTilesAsync calls (e.g. ShowMap toggling on right before a
+    // debounced pan/zoom refresh fires) never starts a second concurrent
+    // request for the same tile.
+    private readonly HashSet<MapTileMath.TileId> _pendingTileRequests = [];
+
+    // Coalesces the flood of pan (MouseMove) / zoom events into a single
+    // visible-tile recompute + fetch pass once input goes idle, so dragging
+    // across the diagram doesn't fire a tile request per pixel moved.
+    private readonly DispatcherTimer _tileRefreshTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+
     public AirportDiagramView()
     {
         InitializeComponent();
+        MapTiles.ItemsSource = _mapTiles;
+        _tileRefreshTimer.Tick += (_, _) =>
+        {
+            _tileRefreshTimer.Stop();
+            _ = RefreshVisibleTilesAsync();
+        };
 
         Loaded += (_, _) => FitToView();
         // A resize re-fits only until the user takes over — after that their
         // chosen zoom/pan is preserved across window resizes.
-        SizeChanged += (_, _) => { if (!_userAdjustedView) FitToView(); };
-        // A newly loaded airport starts fitted again.
-        DataContextChanged += (_, _) => FitToView();
+        SizeChanged += (_, _) => { if (!_userAdjustedView) FitToView(); ScheduleTileRefresh(); };
+        // A newly loaded airport starts fitted again. The old diagram's tiles
+        // are meaningless for the new one (different reference point/origin),
+        // so clear immediately rather than waiting for the debounced refresh.
+        DataContextChanged += (_, _) =>
+        {
+            FitToView();
+            _mapTiles.Clear();
+            _pendingTileRequests.Clear();
+            _ = RefreshVisibleTilesAsync();
+        };
+    }
+
+    // Restarts the debounce timer — see _tileRefreshTimer's doc comment.
+    private void ScheduleTileRefresh()
+    {
+        _tileRefreshTimer.Stop();
+        _tileRefreshTimer.Start();
+    }
+
+    // Recomputes which OSM tiles are visible for the diagram's current
+    // zoom/pan and ShowMap/MapTileService state, drops any shown tile that's
+    // no longer visible, and asynchronously fetches/adds any newly-visible
+    // one. Never blocks the UI thread — each fetch runs as its own
+    // fire-and-forget task (LoadTileAsync), since MapTileService.GetTileAsync
+    // may hit the network.
+    private async Task RefreshVisibleTilesAsync()
+    {
+        if (!ShowMap || MapTileService is not { } tileService || DataContext is not AirportDiagram diagram)
+        {
+            _mapTiles.Clear();
+            return;
+        }
+        if (ActualWidth <= 0 || ActualHeight <= 0) return;
+
+        var scale = DiagramScale.ScaleX;
+        if (scale <= 0) return;
+
+        // screen = canvas * scale + translate (see the XAML's RenderTransform
+        // comment), so canvas/diagram-space = (screen - translate) / scale -
+        // the same untransformed meters space every diagram shape's own
+        // Point2D lives in.
+        var viewportTopLeft = new Point2D(-DiagramTranslate.X / scale, -DiagramTranslate.Y / scale);
+        var viewportBottomRight = new Point2D(
+            (ActualWidth - DiagramTranslate.X) / scale,
+            (ActualHeight - DiagramTranslate.Y) / scale);
+
+        var zoom = MapTileMath.SelectZoom(1.0 / scale, diagram.ReferenceLatitude);
+        var visibleTiles = MapTileMath.GetVisibleTiles(
+            viewportTopLeft, viewportBottomRight, zoom,
+            diagram.ReferenceLatitude, diagram.ReferenceLongitude,
+            diagram.OriginXMeters, diagram.OriginZMeters);
+        var visibleIds = visibleTiles.Select(t => t).ToHashSet();
+
+        for (var i = _mapTiles.Count - 1; i >= 0; i--)
+        {
+            if (!visibleIds.Contains(_mapTiles[i].Id)) _mapTiles.RemoveAt(i);
+        }
+
+        var alreadyShown = _mapTiles.Select(t => t.Id).ToHashSet();
+        foreach (var tileId in visibleTiles)
+        {
+            if (alreadyShown.Contains(tileId) || !_pendingTileRequests.Add(tileId)) continue;
+            _ = LoadTileAsync(tileId, diagram, tileService);
+        }
+    }
+
+    private async Task LoadTileAsync(MapTileMath.TileId id, AirportDiagram diagram, IMapTileService tileService)
+    {
+        try
+        {
+            var bytes = await tileService.GetTileAsync(id.X, id.Y, id.Zoom, CancellationToken.None);
+            // A tile that fails to fetch is simply not drawn - see
+            // IMapTileSource's doc comment; no error surfaced to the user.
+            if (bytes is null) return;
+
+            // ShowMap may have been toggled off, or a different airport
+            // loaded, while this fetch was in flight - discard a now-stale
+            // result rather than adding it (see OnShowMapChanged's comment).
+            if (!ShowMap || DataContext != diagram) return;
+
+            var image = DecodeImage(bytes);
+            if (image is null) return;
+
+            var (topLeft, bottomRight) = MapTileMath.TileScreenRect(
+                id.X, id.Y, id.Zoom, diagram.ReferenceLatitude, diagram.ReferenceLongitude,
+                diagram.OriginXMeters, diagram.OriginZMeters);
+            var width = bottomRight.X - topLeft.X;
+            var height = bottomRight.Y - topLeft.Y;
+            // Degenerate (e.g. a tile right at a pole-clamped latitude) -
+            // draw nothing rather than risk Rect's constructor throwing on a
+            // negative width/height.
+            if (width <= 0 || height <= 0) return;
+
+            // ImageBrush + an absolute-coordinate RectangleGeometry (see the
+            // XAML template and MapTileViewModel's doc comment) rather than
+            // Canvas.Left/Top + Width/Height on an <Image> - the latter hit
+            // the same "every item stacks near canvas (0,0)" bug already
+            // documented/fixed for the TaxiwayPoints template.
+            var fill = new ImageBrush(image) { Stretch = Stretch.Fill };
+            fill.Freeze();
+
+            _mapTiles.Add(new MapTileViewModel { Id = id, Fill = fill, Rect = new Rect(topLeft.X, topLeft.Y, width, height) });
+        }
+        finally
+        {
+            _pendingTileRequests.Remove(id);
+        }
+    }
+
+    // Null (never a thrown exception) for bytes that don't decode as an
+    // image, so a corrupt/unexpected tile response is treated the same as a
+    // failed fetch - just not drawn.
+    private static BitmapImage? DecodeImage(byte[] bytes)
+    {
+        try
+        {
+            using var stream = new MemoryStream(bytes);
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.StreamSource = stream;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
     }
 
     private void FitToView()
@@ -171,6 +373,7 @@ public partial class AirportDiagramView : UserControl
         DiagramScale.ScaleX = DiagramScale.ScaleY = newScale;
 
         _userAdjustedView = true;
+        ScheduleTileRefresh();
         e.Handled = true;
     }
 
@@ -220,6 +423,7 @@ public partial class AirportDiagramView : UserControl
         _isPanning = false;
         Cursor = Cursors.Arrow;
         if (IsMouseCaptured) ReleaseMouseCapture();
+        ScheduleTileRefresh();
 
         if (!wasBackgroundClick) return;
 

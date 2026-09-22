@@ -15,6 +15,7 @@ public class MainViewModel : ViewModelBase
     private readonly IFileDialogService? _fileDialogService;
     private readonly IAirportProjectStore? _projectStore;
     private readonly IAirportXmlExporter? _xmlExporter;
+    private readonly IMapTileService? _mapTileService;
 
     private string _icaoInput = string.Empty;
     private bool _isLoading;
@@ -29,6 +30,7 @@ public class MainViewModel : ViewModelBase
     private string? _lastProjectSavePath;
     private string? _lastXmlExportPath;
     private IReadOnlyList<string> _lastXmlExportWarnings = [];
+    private bool _showMap;
 
     public string IcaoInput
     {
@@ -355,6 +357,30 @@ public class MainViewModel : ViewModelBase
     // omitted in tests that don't exercise it).
     public bool IsXmlExportAvailable => _xmlExporter != null && _fileDialogService != null;
 
+    // Drives the Diagram/Edit tabs' "Show map" checkbox visibility — a real,
+    // always-on feature like the project store/XML export above (nullable
+    // only so it can be omitted in tests that don't exercise it).
+    public bool IsMapAvailable => _mapTileService != null;
+
+    // Bound to both the Diagram tab's and Edit tab's AirportDiagramView
+    // instances (see MainWindow.xaml) and to their own "Show map" checkboxes
+    // — one shared toggle for both. Off by default and deliberately
+    // session-only: NOT persisted to the project file or any settings store,
+    // since turning it on is this app's first outbound network call (sends
+    // the loaded airport's coordinates and the user's IP to OpenStreetMap's
+    // tile servers) — see requirements.md's phase-0 "OpenStreetMap tile
+    // layer" entry and background-map-research.md.
+    public bool ShowMap
+    {
+        get => _showMap;
+        set => SetField(ref _showMap, value);
+    }
+
+    // Exposed for AirportDiagramView's MapTileService DependencyProperty
+    // binding (see MainWindow.xaml) — the view itself does the actual
+    // fetch/cache orchestration; this ViewModel only carries the reference.
+    public IMapTileService? MapTileService => _mapTileService;
+
     // Exposed so MainWindow can drive Connect/Disconnect around the window
     // lifecycle without the ViewModel needing to know about HWNDs.
     public ISimConnectService SimConnect => _simConnect;
@@ -383,13 +409,14 @@ public class MainViewModel : ViewModelBase
     public RelayCommand<ParkingSpotEditViewModel> ArmParkingPlacementCommand { get; }
     public RelayCommand<Point2D> PlaceParkingCommand { get; }
 
-    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null)
+    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null)
     {
         _simConnect = simConnect;
         _debugDataStore = debugDataStore;
         _fileDialogService = fileDialogService;
         _projectStore = projectStore;
         _xmlExporter = xmlExporter;
+        _mapTileService = mapTileService;
         TaxiNamesPicker = new ReadOnlyObservableCollection<TaxiNameEditViewModel>(TaxiNames);
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => IsValidIcao(IcaoInput));

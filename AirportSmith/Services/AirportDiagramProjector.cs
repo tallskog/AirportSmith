@@ -565,6 +565,8 @@ public static class AirportDiagramProjector
             }).ToList(),
             OriginXMeters = CanvasMarginMeters - minX,
             OriginZMeters = maxZ + CanvasMarginMeters,
+            ReferenceLatitude = airport.Latitude,
+            ReferenceLongitude = airport.Longitude,
         };
     }
 

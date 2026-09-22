@@ -39,4 +39,41 @@ public class GeoProjectionTests
         Assert.Equal(47.4502, lat, LatLonPrecision);
         Assert.Equal(8.5616, lon, LatLonPrecision);
     }
+
+    // Pins absolute accuracy, not just round-trip consistency (the tests
+    // above would pass even for a wrong-but-self-consistent formula).
+    // Expected meters-per-degree values are independently computed from the
+    // standard WGS84 meridian/prime-vertical closed-form formulas, not by
+    // running GeoProjection itself.
+    [Theory]
+    [InlineData(0, 110574.28, 111319.49)]        // equator
+    [InlineData(47.4502, 111179.62, 75414.79)]    // Zurich (this file's usual reference point)
+    [InlineData(60, 111412.29, 55800.00)]
+    [InlineData(-33.9461, 110921.41, 92443.10)]   // Sydney
+    public void ProjectLatLon_OneDegreeOffset_MatchesKnownWgs84MetersPerDegree(
+        double refLat, double expectedMetersPerDegLat, double expectedMetersPerDegLon)
+    {
+        var (xEast, _) = GeoProjection.ProjectLatLon(refLat, 0, refLat, 1);
+        var (_, zNorth) = GeoProjection.ProjectLatLon(refLat, 0, refLat + 1, 0);
+
+        Assert.Equal(expectedMetersPerDegLon, xEast, 1);
+        Assert.Equal(expectedMetersPerDegLat, zNorth, 1);
+    }
+
+    [Fact]
+    public void ProjectLatLon_AtNonEquatorialLatitude_DiffersFromOldFlatEquatorialConstant()
+    {
+        // Regression guard: the previous implementation used a single
+        // constant (111_320 m/deg, the equatorial figure) for latitude
+        // distance at every latitude. At 60N the correct meridian-based
+        // figure is ~111412.29 m/deg (per the Theory above) — noticeably
+        // different from the old flat constant, so this would fail if the
+        // fix were ever reverted.
+        const double oldFlatConstant = 111_320;
+
+        var (_, zNorth) = GeoProjection.ProjectLatLon(60, 0, 61, 0);
+
+        Assert.NotEqual(oldFlatConstant, zNorth, 0);
+        Assert.Equal(111412.29, zNorth, 1);
+    }
 }

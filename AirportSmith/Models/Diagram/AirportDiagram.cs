@@ -365,4 +365,12 @@ public class AirportDiagram
     // whole projection.
     public double OriginXMeters { get; init; }
     public double OriginZMeters { get; init; }
+
+    // The airport's own reference point (AirportDetails.Latitude/Longitude) —
+    // the same (lat, lon) GeoProjection.ProjectLatLon/UnprojectLocalPoint use
+    // as their reference throughout this diagram. Needed to place a map tile
+    // layer (see MapTileMath) in the same local-meters plane as every other
+    // shape here.
+    public double ReferenceLatitude { get; init; }
+    public double ReferenceLongitude { get; init; }
 }
