@@ -335,11 +335,29 @@ public class MainViewModel : ViewModelBase
     // Skipped/defaulted/truncated data noticed while building the last XML
     // export (see AirportXmlExporter.Build) — shown to the user rather than
     // hidden, per this project's "surface gaps, don't hide them" style.
+    // Setting this (including clearing it back to [] on a new airport load)
+    // always un-dismisses the warnings panel too — see
+    // ShowXmlExportWarnings/DismissXmlExportWarningsCommand below — so
+    // dismissing a big warning list once doesn't silently suppress a LATER
+    // export's real warnings.
     public IReadOnlyList<string> LastXmlExportWarnings
     {
         get => _lastXmlExportWarnings;
-        private set => SetField(ref _lastXmlExportWarnings, value);
+        private set
+        {
+            if (!SetField(ref _lastXmlExportWarnings, value)) return;
+            _isXmlExportWarningsDismissed = false;
+            OnPropertyChanged(nameof(ShowXmlExportWarnings));
+        }
     }
+
+    // True only while there's something to show AND the user hasn't closed
+    // it (DismissXmlExportWarningsCommand) — a long warning list was
+    // reported as taking up too much of the screen with no way to close it,
+    // hence this. Backs the warnings panel's own Visibility in
+    // MainWindow.xaml instead of LastXmlExportWarnings.Count directly.
+    private bool _isXmlExportWarningsDismissed;
+    public bool ShowXmlExportWarnings => LastXmlExportWarnings.Count > 0 && !_isXmlExportWarningsDismissed;
 
     // Backs the Edit tab's diagram multi-select + batch-edit popover.
     public int SelectedTaxiwayCount => SelectedTaxiwayShapes.Count();
@@ -413,6 +431,7 @@ public class MainViewModel : ViewModelBase
     public RelayCommand SaveProjectCommand { get; }
     public RelayCommand LoadProjectCommand { get; }
     public RelayCommand ExportXmlCommand { get; }
+    public RelayCommand DismissXmlExportWarningsCommand { get; }
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
     public RelayCommand<TaxiwaySelectionRequest> ToggleTaxiwaySelectionCommand { get; }
@@ -460,6 +479,7 @@ public class MainViewModel : ViewModelBase
         SaveProjectCommand = new RelayCommand(SaveProject, () => _projectStore != null && Airport != null);
         LoadProjectCommand = new RelayCommand(LoadProject, () => _projectStore != null && IsValidIcao(IcaoInput));
         ExportXmlCommand = new RelayCommand(ExportXml, () => IsXmlExportAvailable && Airport != null);
+        DismissXmlExportWarningsCommand = new RelayCommand(DismissXmlExportWarnings, () => ShowXmlExportWarnings);
         AddTaxiNameCommand = new RelayCommand(AddTaxiName, () => Airport != null);
         DeleteTaxiNameCommand = new RelayCommand<TaxiNameEditViewModel>(DeleteTaxiName, name => name != null);
         ToggleTaxiwaySelectionCommand = new RelayCommand<TaxiwaySelectionRequest>(ToggleTaxiwaySelection, request => request != null);
@@ -1745,5 +1765,18 @@ public class MainViewModel : ViewModelBase
         var outcome = _xmlExporter.Export(Airport, path);
         LastXmlExportPath = outcome.FilePath;
         LastXmlExportWarnings = outcome.Warnings;
+    }
+
+    // Closes the export-warnings panel without discarding
+    // LastXmlExportWarnings itself — a later Export Airport XML click (or
+    // loading a different airport) un-dismisses it again via
+    // LastXmlExportWarnings' own setter, so this can't silently suppress a
+    // future real export's warnings.
+    private void DismissXmlExportWarnings()
+    {
+        if (_isXmlExportWarningsDismissed) return;
+        _isXmlExportWarningsDismissed = true;
+        OnPropertyChanged(nameof(ShowXmlExportWarnings));
+        DismissXmlExportWarningsCommand.RaiseCanExecuteChanged();
     }
 }

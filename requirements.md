@@ -2717,3 +2717,35 @@ directly rather than nesting it in a sub-record.
   expand/collapse, row selection driving the details panel, the "select a
   runway" placeholder text) — real WPF rendering, same exclusion category as
   every other view-layer change in this file.
+
+## New feature: closable Export Airport XML warnings panel (2026-09-23)
+
+**User-reported annoyance:** a large `<Airport>` XML export can produce a
+long list of warnings (unmapped codes, truncated names, skipped paths —
+see the "Generate SDK-compatible `<Airport>` XML" epic's own known
+limitations); the panel showing them had no way to close it, so it could
+take up a big chunk of the screen with no way to get it out of the way.
+
+**Fix:** added an "✕" close button to the warnings panel's header
+(`MainViewModel.DismissXmlExportWarningsCommand`). Closing it only hides the
+panel — `LastXmlExportWarnings` itself is untouched — and a fresh set of
+warnings always un-dismisses it again automatically: `LastXmlExportWarnings`'s
+setter resets the dismissed flag on every assignment, including the `[]`
+reset on a new airport load and a subsequent `Export Airport XML` click, so
+dismissing a big list once can never silently suppress a LATER export's real
+warnings. New `MainViewModel.ShowXmlExportWarnings` (`Count > 0 && !dismissed`)
+backs the panel's `Visibility` in place of the old direct
+`LastXmlExportWarnings.Count` binding.
+
+- **Backwards compatibility:** no persisted field touched — this is
+  session-only UI state, never saved by Save Project (matching every other
+  "hide from diagram"/selection-style toggle in this app).
+- Removed `CountToVisibilityConverter` (`App.xaml`'s `CountToVisibility`
+  resource and its own `Helpers` file) — this was its only caller, and it's
+  now genuinely dead code rather than something to keep "just in case".
+- Test coverage: `MainViewModelTests.ShowXmlExportWarnings_FalseBeforeExport_AndWhenExportHasNoWarnings`/
+  `DismissXmlExportWarningsCommand_HidesPanel_WithoutClearingTheUnderlyingWarnings`/
+  `ExportingAgainAfterDismissing_ShowsTheWarningsPanelAgain`. The close
+  button's real click/visual behavior is WPF view-layer rendering, not
+  covered by automated tests per CLAUDE.md's testing policy — needs manual
+  verification.

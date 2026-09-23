@@ -1089,6 +1089,75 @@ public class MainViewModelTests
         Assert.Empty(vm.LastXmlExportWarnings);
     }
 
+    // User-reported: a long warning list took up too much of the screen
+    // with no way to close it.
+    private static MainViewModel CreateViewModelWithXmlExportWarnings(params string[] warnings)
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var projectStore = new FakeAirportProjectStore();
+        projectStore.Save(airport);
+        var dialog = new FakeFileDialogService { PathToReturn = "C:/out/EFHK.xml" };
+        var exporter = new FakeAirportXmlExporter { PathToReturn = "C:/out/EFHK.xml", WarningsToReturn = warnings };
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: projectStore,
+            fileDialogService: dialog, xmlExporter: exporter)
+        { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+        return vm;
+    }
+
+    [Fact]
+    public void ShowXmlExportWarnings_FalseBeforeExport_AndWhenExportHasNoWarnings()
+    {
+        var vmWithWarnings = CreateViewModelWithXmlExportWarnings("taxi path 0->1 skipped");
+        Assert.False(vmWithWarnings.ShowXmlExportWarnings); // nothing exported yet
+
+        var vmWithoutWarnings = CreateViewModelWithXmlExportWarnings(); // no warnings
+        vmWithoutWarnings.ExportXmlCommand.Execute(null);
+        Assert.False(vmWithoutWarnings.ShowXmlExportWarnings); // exported, but nothing to show
+    }
+
+    [Fact]
+    public void DismissXmlExportWarningsCommand_HidesPanel_WithoutClearingTheUnderlyingWarnings()
+    {
+        var vm = CreateViewModelWithXmlExportWarnings("taxi path 0->1 skipped");
+        vm.ExportXmlCommand.Execute(null);
+        Assert.True(vm.ShowXmlExportWarnings);
+        Assert.True(vm.DismissXmlExportWarningsCommand.CanExecute(null));
+
+        vm.DismissXmlExportWarningsCommand.Execute(null);
+
+        Assert.False(vm.ShowXmlExportWarnings);
+        Assert.False(vm.DismissXmlExportWarningsCommand.CanExecute(null));
+        // The data itself is still there — only the panel's visibility changed.
+        Assert.Equal(["taxi path 0->1 skipped"], vm.LastXmlExportWarnings);
+    }
+
+    // A later export must show its own warnings even if an earlier one was
+    // dismissed — otherwise dismissing once would silently suppress every
+    // future export's real warnings.
+    [Fact]
+    public void ExportingAgainAfterDismissing_ShowsTheWarningsPanelAgain()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var projectStore = new FakeAirportProjectStore();
+        projectStore.Save(airport);
+        var dialog = new FakeFileDialogService { PathToReturn = "C:/out/EFHK.xml" };
+        var exporter = new FakeAirportXmlExporter { PathToReturn = "C:/out/EFHK.xml", WarningsToReturn = ["warning 1"] };
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: projectStore,
+            fileDialogService: dialog, xmlExporter: exporter)
+        { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+        vm.ExportXmlCommand.Execute(null);
+        vm.DismissXmlExportWarningsCommand.Execute(null);
+        Assert.False(vm.ShowXmlExportWarnings);
+
+        exporter.WarningsToReturn = ["warning 2"];
+        vm.ExportXmlCommand.Execute(null);
+
+        Assert.True(vm.ShowXmlExportWarnings);
+        Assert.Equal(["warning 2"], vm.LastXmlExportWarnings);
+    }
+
     // Same "click a shape, see just that shape's data" pattern as
     // ClickingDiagramTaxiway_FiltersVisibleTaxiPathEditsToSelection, for
     // taxiway points — an independent selection from taxi paths, but

@@ -9,6 +9,5 @@
         <helpers:Point2DToPointConverter x:Key="Point2DToPoint"/>
         <helpers:Point2DListToPointCollectionConverter x:Key="Point2DListToPointCollection"/>
         <helpers:StringListToLinesConverter x:Key="StringListToNewlines"/>
-        <helpers:CountToVisibilityConverter x:Key="CountToVisibility"/>
     </Application.Resources>
 </Application>

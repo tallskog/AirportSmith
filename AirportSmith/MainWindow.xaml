@@ -58,9 +58,23 @@
 
         <TextBlock Grid.Row="2" Text="{Binding LastXmlExportPath, StringFormat='Airport XML exported to: {0}'}" Margin="0,4,0,0"
                     Visibility="{Binding IsXmlExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+        <!-- Closable: a long warning list was reported as taking up too much
+             of the screen with no way to collapse it. ShowXmlExportWarnings
+             (not LastXmlExportWarnings.Count directly) backs Visibility so
+             the "X" button can dismiss the panel without discarding the
+             underlying warnings — a later export, or loading a different
+             airport, un-dismisses it again automatically (see
+             MainViewModel.LastXmlExportWarnings' own doc comment), so
+             dismissing once can't silently hide a future real export's
+             warnings. -->
         <StackPanel Grid.Row="2" Margin="0,22,0,0"
-                    Visibility="{Binding LastXmlExportWarnings.Count, Converter={StaticResource CountToVisibility}}">
-            <TextBlock Foreground="DarkOrange" Text="{Binding LastXmlExportWarnings.Count, StringFormat='Export warnings ({0}):'}"/>
+                    Visibility="{Binding ShowXmlExportWarnings, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="✕" Padding="6,0" Margin="6,0,0,0"
+                        ToolTip="Close export warnings"
+                        Command="{Binding DismissXmlExportWarningsCommand}"/>
+                <TextBlock Foreground="DarkOrange" Text="{Binding LastXmlExportWarnings.Count, StringFormat='Export warnings ({0}):'}"/>
+            </DockPanel>
             <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto" Margin="0,2,0,0">
                 <TextBlock Foreground="DarkOrange" TextWrapping="Wrap"
                            Text="{Binding LastXmlExportWarnings, Converter={StaticResource StringListToNewlines}, Mode=OneWay}"/>
