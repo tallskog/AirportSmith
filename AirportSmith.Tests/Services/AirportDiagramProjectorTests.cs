@@ -388,6 +388,71 @@ public class AirportDiagramProjectorTests
         Assert.All(diagram.Runways, r => Assert.Null(r.PrimaryFeatures.ApproachLights));
     }
 
+    // ComputeApproachLightsPlacement is what lets a runway's approach lights
+    // track an Edit tab SystemType change live (see
+    // MainViewModel.RefreshApproachLightsShape) — this confirms it
+    // reproduces exactly what Project itself already computed, same
+    // "recompute matches Project" contract ComputeVasiPlacement's own tests
+    // establish for VASI/PAPI.
+    [Fact]
+    public void ComputeApproachLightsPlacement_Primary_MatchesWhatProjectProduced()
+    {
+        var runway = new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Alsf2),
+        };
+        var airport = Airport(a => a.Runways.Add(runway));
+        var diagram = AirportDiagramProjector.Project(airport);
+        var expected = Assert.Single(diagram.Runways).PrimaryFeatures.ApproachLights;
+        Assert.NotNull(expected);
+
+        var actual = AirportDiagramProjector.ComputeApproachLightsPlacement(diagram, airport, runwayIndex: 0, isPrimary: true);
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected!.RailLights, actual!.RailLights);
+        Assert.Equal(expected.CrossBar, actual.CrossBar);
+    }
+
+    [Fact]
+    public void ComputeApproachLightsPlacement_Secondary_MatchesWhatProjectProduced()
+    {
+        var runway = new Runway
+        {
+            Latitude = 0,
+            Longitude = 0,
+            HeadingDeg = 0,
+            LengthMeters = 1000,
+            WidthMeters = 100,
+            SecondaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Mals),
+        };
+        var airport = Airport(a => a.Runways.Add(runway));
+        var diagram = AirportDiagramProjector.Project(airport);
+        var expected = Assert.Single(diagram.Runways).SecondaryFeatures.ApproachLights;
+        Assert.NotNull(expected);
+
+        var actual = AirportDiagramProjector.ComputeApproachLightsPlacement(diagram, airport, runwayIndex: 0, isPrimary: false);
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected!.RailLights, actual!.RailLights);
+        Assert.Equal(expected.CrossBar, actual.CrossBar);
+    }
+
+    [Fact]
+    public void ComputeApproachLightsPlacement_NoSystemInstalled_ReturnsNull()
+    {
+        var runway = new Runway { Latitude = 0, Longitude = 0, HeadingDeg = 0, LengthMeters = 1000, WidthMeters = 100 };
+        var airport = Airport(a => a.Runways.Add(runway));
+        var diagram = AirportDiagramProjector.Project(airport);
+
+        Assert.Null(AirportDiagramProjector.ComputeApproachLightsPlacement(diagram, airport, runwayIndex: 0, isPrimary: true));
+        Assert.Null(AirportDiagramProjector.ComputeApproachLightsPlacement(diagram, airport, runwayIndex: 0, isPrimary: false));
+    }
+
     [Fact]
     public void Project_MultipleRunways_CanvasBoundsCoverAll()
     {

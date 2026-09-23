@@ -261,6 +261,61 @@ public class RunwayEditViewModel : ViewModelBase
         }
     }
 
+    // Independent of PrimarySystemType/SecondarySystemType above — see
+    // Runway.PrimaryApproachLightsStrobeCount's own doc comment for why
+    // these live as flat Runway properties rather than inside
+    // ApproachLightSystem (a real runway can have REIL/touchdown lights
+    // with no approach light system chosen at all, so tying them to
+    // PrimarySystemType/SecondarySystemType being non-null would make that
+    // case unrepresentable/uneditable).
+    public int PrimaryApproachLightsStrobeCount
+    {
+        get => _runway.PrimaryApproachLightsStrobeCount;
+        set { if (_runway.PrimaryApproachLightsStrobeCount == value) return; _runway.PrimaryApproachLightsStrobeCount = value; OnPropertyChanged(); }
+    }
+
+    public bool PrimaryApproachLightsHasEndLights
+    {
+        get => _runway.PrimaryApproachLightsHasEndLights;
+        set { if (_runway.PrimaryApproachLightsHasEndLights == value) return; _runway.PrimaryApproachLightsHasEndLights = value; OnPropertyChanged(); }
+    }
+
+    public bool PrimaryApproachLightsHasReilLights
+    {
+        get => _runway.PrimaryApproachLightsHasReilLights;
+        set { if (_runway.PrimaryApproachLightsHasReilLights == value) return; _runway.PrimaryApproachLightsHasReilLights = value; OnPropertyChanged(); }
+    }
+
+    public bool PrimaryApproachLightsHasTouchdownLights
+    {
+        get => _runway.PrimaryApproachLightsHasTouchdownLights;
+        set { if (_runway.PrimaryApproachLightsHasTouchdownLights == value) return; _runway.PrimaryApproachLightsHasTouchdownLights = value; OnPropertyChanged(); }
+    }
+
+    public int SecondaryApproachLightsStrobeCount
+    {
+        get => _runway.SecondaryApproachLightsStrobeCount;
+        set { if (_runway.SecondaryApproachLightsStrobeCount == value) return; _runway.SecondaryApproachLightsStrobeCount = value; OnPropertyChanged(); }
+    }
+
+    public bool SecondaryApproachLightsHasEndLights
+    {
+        get => _runway.SecondaryApproachLightsHasEndLights;
+        set { if (_runway.SecondaryApproachLightsHasEndLights == value) return; _runway.SecondaryApproachLightsHasEndLights = value; OnPropertyChanged(); }
+    }
+
+    public bool SecondaryApproachLightsHasReilLights
+    {
+        get => _runway.SecondaryApproachLightsHasReilLights;
+        set { if (_runway.SecondaryApproachLightsHasReilLights == value) return; _runway.SecondaryApproachLightsHasReilLights = value; OnPropertyChanged(); }
+    }
+
+    public bool SecondaryApproachLightsHasTouchdownLights
+    {
+        get => _runway.SecondaryApproachLightsHasTouchdownLights;
+        set { if (_runway.SecondaryApproachLightsHasTouchdownLights == value) return; _runway.SecondaryApproachLightsHasTouchdownLights = value; OnPropertyChanged(); }
+    }
+
     // A workspace/editor convenience for decluttering the diagram — NOT
     // written to Runway and never persisted by Save Project, since it isn't
     // an actual property of the airport being edited. MainViewModel listens

@@ -198,6 +198,50 @@ public static class AirportDiagramProjector
         _ => ApproachLightCategory.None,
     };
 
+    // Approach lights sit OUTWARD from the threshold, along the extended
+    // centerline opposite the runway itself — the direction landing traffic
+    // approaches from, same "outward" direction Extension (in Project) uses
+    // for blast pads/overruns. A standalone method (not a local function
+    // closing over Project's loop state, as it originally was) so
+    // ComputeApproachLightsPlacement below can call it too, to recompute just
+    // one runway end's lights after an Edit tab SystemType change — same
+    // "extract the pure math so both the bulk pass and a single live
+    // recompute agree" precedent as BuildTaxiwayWidthCorners.
+    private static ApproachLightsWorking? ComputeApproachLightsWorking(ApproachLightSystem? feature, LocalPoint threshold, (double X, double Z) outwardDir, (double X, double Z) right)
+    {
+        if (feature is null) return null;
+        var category = Categorize(feature.SystemType);
+        if (category == ApproachLightCategory.None) return null;
+
+        var (length, spacing) = category switch
+        {
+            ApproachLightCategory.Sparse => (SparseApproachLightsLengthMeters, SparseApproachLightsSpacingMeters),
+            ApproachLightCategory.Short => (ShortApproachLightsLengthMeters, ApproachLightsSpacingMeters),
+            _ => (FullApproachLightsLengthMeters, ApproachLightsSpacingMeters),
+        };
+
+        var lightCount = (int)(length / spacing) + 1;
+        var railLights = new LocalPoint[lightCount];
+        for (var i = 0; i < lightCount; i++)
+        {
+            var dist = i * spacing;
+            railLights[i] = new LocalPoint(threshold.X + outwardDir.X * dist, threshold.Z + outwardDir.Z * dist);
+        }
+
+        LocalPoint[] crossBar = [];
+        if (category == ApproachLightCategory.FullWithRedBar && length > RedCrossBarDistanceMeters)
+        {
+            var barCenter = new LocalPoint(threshold.X + outwardDir.X * RedCrossBarDistanceMeters, threshold.Z + outwardDir.Z * RedCrossBarDistanceMeters);
+            crossBar =
+            [
+                new LocalPoint(barCenter.X + right.X * RedCrossBarHalfWidthMeters, barCenter.Z + right.Z * RedCrossBarHalfWidthMeters),
+                new LocalPoint(barCenter.X - right.X * RedCrossBarHalfWidthMeters, barCenter.Z - right.Z * RedCrossBarHalfWidthMeters),
+            ];
+        }
+
+        return new ApproachLightsWorking(railLights, crossBar);
+    }
+
     public static AirportDiagram Project(AirportDetails airport)
     {
         // Both endpoints must already be in the local-meters plane — builds
@@ -336,55 +380,16 @@ public static class AirportDiagramProjector
                 return new ExtensionWorking(extCorners, demarcationBar, chevrons);
             }
 
-            // Approach lights sit OUTWARD from the threshold, along the
-            // extended centerline opposite the runway itself — the
-            // direction landing traffic approaches from, same "outward"
-            // direction Extension uses for blast pads/overruns.
-            ApproachLightsWorking? ApproachLights(ApproachLightSystem? feature, LocalPoint threshold, (double X, double Z) outwardDir)
-            {
-                if (feature is null) return null;
-                var category = Categorize(feature.SystemType);
-                if (category == ApproachLightCategory.None) return null;
-
-                var (length, spacing) = category switch
-                {
-                    ApproachLightCategory.Sparse => (SparseApproachLightsLengthMeters, SparseApproachLightsSpacingMeters),
-                    ApproachLightCategory.Short => (ShortApproachLightsLengthMeters, ApproachLightsSpacingMeters),
-                    _ => (FullApproachLightsLengthMeters, ApproachLightsSpacingMeters),
-                };
-
-                var lightCount = (int)(length / spacing) + 1;
-                var railLights = new LocalPoint[lightCount];
-                for (var i = 0; i < lightCount; i++)
-                {
-                    var dist = i * spacing;
-                    railLights[i] = new LocalPoint(threshold.X + outwardDir.X * dist, threshold.Z + outwardDir.Z * dist);
-                }
-
-                LocalPoint[] crossBar = [];
-                if (category == ApproachLightCategory.FullWithRedBar && length > RedCrossBarDistanceMeters)
-                {
-                    var barCenter = new LocalPoint(threshold.X + outwardDir.X * RedCrossBarDistanceMeters, threshold.Z + outwardDir.Z * RedCrossBarDistanceMeters);
-                    crossBar =
-                    [
-                        new LocalPoint(barCenter.X + right.X * RedCrossBarHalfWidthMeters, barCenter.Z + right.Z * RedCrossBarHalfWidthMeters),
-                        new LocalPoint(barCenter.X - right.X * RedCrossBarHalfWidthMeters, barCenter.Z - right.Z * RedCrossBarHalfWidthMeters),
-                    ];
-                }
-
-                return new ApproachLightsWorking(railLights, crossBar);
-            }
-
             runways.Add(new RunwayWorkingData(
                 runway, runwaySourceIndex, threshold1, threshold2, corners, primaryLabelPosition, secondaryLabelPosition,
                 PrimaryThresholdMarking: ThresholdMarking(runway.PrimaryThreshold, threshold1, forward),
                 PrimaryBlastPad: Extension(runway.PrimaryBlastPad, threshold1, (-forward.X, -forward.Z)),
                 PrimaryOverrun: Extension(runway.PrimaryOverrun, threshold1, (-forward.X, -forward.Z)),
-                PrimaryApproachLights: ApproachLights(runway.PrimaryApproachLights, threshold1, (-forward.X, -forward.Z)),
+                PrimaryApproachLights: ComputeApproachLightsWorking(runway.PrimaryApproachLights, threshold1, (-forward.X, -forward.Z), right),
                 SecondaryThresholdMarking: ThresholdMarking(runway.SecondaryThreshold, threshold2, (-forward.X, -forward.Z)),
                 SecondaryBlastPad: Extension(runway.SecondaryBlastPad, threshold2, forward),
                 SecondaryOverrun: Extension(runway.SecondaryOverrun, threshold2, forward),
-                SecondaryApproachLights: ApproachLights(runway.SecondaryApproachLights, threshold2, forward)));
+                SecondaryApproachLights: ComputeApproachLightsWorking(runway.SecondaryApproachLights, threshold2, forward, right)));
 
             // Every slot gets a working entry regardless of IsInstalled — see
             // VasiShape's own doc comment for why (pre-created so enabling a
@@ -579,6 +584,33 @@ public static class AirportDiagramProjector
             ToScreenPoint(diagram, wingA),
             ToScreenPoint(diagram, wingB),
             isInstalled);
+    }
+
+    // Screen-space ApproachLightSystemShape for one runway end's CURRENT
+    // Primary/SecondaryApproachLights — called by MainViewModel after an
+    // Edit tab SystemType change to recompute just that one end's lights
+    // (see RunwayShape.PrimaryFeatures/SecondaryFeatures' own doc comment)
+    // without re-running the whole projection. Returns null when that end
+    // has no approach light system installed (SystemType null/None), same
+    // "null means absent" convention Project's own runway loop uses — the
+    // caller is expected to write this straight back as that end's
+    // ApproachLights (clearing an existing one just as readily as setting a
+    // new one). Threshold/outward direction mirror Project's own primary
+    // (threshold1, -forward) vs. secondary (threshold2, +forward) wiring.
+    public static ApproachLightSystemShape? ComputeApproachLightsPlacement(AirportDiagram diagram, AirportDetails airport, int runwayIndex, bool isPrimary)
+    {
+        var runway = airport.Runways[runwayIndex];
+        var frame = ComputeRunwayFrame(airport, runway);
+        var threshold = isPrimary ? frame.Threshold1 : frame.Threshold2;
+        var outward = isPrimary ? (X: -frame.Forward.X, Z: -frame.Forward.Z) : frame.Forward;
+        var feature = isPrimary ? runway.PrimaryApproachLights : runway.SecondaryApproachLights;
+
+        var working = ComputeApproachLightsWorking(feature, threshold, outward, frame.Right);
+        if (working is null) return null;
+
+        return new ApproachLightSystemShape(
+            working.RailLights.Select(p => ToScreenPoint(diagram, p)).ToList(),
+            working.CrossBar.Select(p => ToScreenPoint(diagram, p)).ToList());
     }
 
     // Inverse of ComputeVasiPlacement's position math: given a diagram click

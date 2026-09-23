@@ -119,24 +119,33 @@ public class SimConnectService : ISimConnectService
 
     // APPROACH_LIGHTS: the two sub-structures RUNWAY nests for
     // PRIMARY_APPROACH_LIGHTS/SECONDARY_APPROACH_LIGHTS, same nesting-by-name
-    // pattern as VASI/PAVEMENT. Only SYSTEM is requested (not STROBE_COUNT/
-    // HAS_END_LIGHTS/HAS_REIL_LIGHTS/HAS_TOUCHDOWN_LIGHTS/ON_GROUND/OFFSET/
-    // SPACING/SLOPE, which this project doesn't use yet). Deliberately NOT
-    // requesting ENABLE: per the SDK's Facility Data reference, this
-    // struct's ENABLE means "whether the approach lights are [currently]
-    // enabled" — an operational/runtime flag — unlike PAVEMENT's ENABLE
-    // ("whether the pavement area is actually... present"), which is a
-    // structural existence flag. An earlier revision of this file treated
+    // pattern as VASI/PAVEMENT. SYSTEM/STROBE_COUNT/HAS_END_LIGHTS/
+    // HAS_REIL_LIGHTS/HAS_TOUCHDOWN_LIGHTS are requested (still not
+    // ON_GROUND/OFFSET/SPACING/SLOPE, which this project doesn't use yet).
+    // Deliberately NOT requesting ENABLE: per the SDK's Facility Data
+    // reference, this struct's ENABLE means "whether the approach lights are
+    // [currently] enabled" — an operational/runtime flag — unlike PAVEMENT's
+    // ENABLE ("whether the pavement area is actually... present"), which is
+    // a structural existence flag. An earlier revision of this file treated
     // the two as the same convention and gated presence on ENABLE!=0, which
     // silently dropped every real SYSTEM value on a live sim (reported by
     // the user as "no approach light data on any runway checked") — SYSTEM
     // has an explicit 0=NONE value of its own (see OnFacilityData below),
-    // so it's used as the presence signal instead, the same way VASI's own
-    // TYPE==0 already is (VASI has no ENABLE field at all).
+    // so it's used as the presence signal for SYSTEM specifically, the same
+    // way VASI's own TYPE==0 already is (VASI has no ENABLE field at all).
+    // StrobeCount/HasEndLights/HasReilLights/HasTouchdownLights have no such
+    // "0 means absent" ambiguity to resolve — they're read and stored
+    // unconditionally (see OnFacilityData below), independent of SYSTEM, per
+    // Runway.PrimaryApproachLightsStrobeCount's own doc comment on why
+    // they're NOT folded into the SYSTEM-gated ApproachLightSystem record.
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct FacilityApproachLightsData
     {
         public int System;
+        public int StrobeCount;
+        public int HasEndLights;
+        public int HasReilLights;
+        public int HasTouchdownLights;
     }
 
     // FREQUENCY: FREQUENCY is INT32 raw Hz (not FLOAT64 — this was the other
@@ -453,10 +462,18 @@ public class SimConnectService : ISimConnectService
         // OnFacilityData — same fragility as the VASI ordering comment above.
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN PRIMARY_APPROACH_LIGHTS");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SYSTEM");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "STROBE_COUNT");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_END_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_REIL_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_TOUCHDOWN_LIGHTS");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE PRIMARY_APPROACH_LIGHTS");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "OPEN SECONDARY_APPROACH_LIGHTS");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "SYSTEM");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "STROBE_COUNT");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_END_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_REIL_LIGHTS");
+        sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "HAS_TOUCHDOWN_LIGHTS");
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE SECONDARY_APPROACH_LIGHTS");
 
         sc.AddToFacilityDefinition(FacilityDefs.AirportCore, "CLOSE RUNWAY");
@@ -696,6 +713,28 @@ public class SimConnectService : ISimConnectService
                         case 1: runwayForApproachLights.SecondaryApproachLights = lights; break;
                     }
                 }
+
+                // StrobeCount/HasEndLights/HasReilLights/HasTouchdownLights
+                // are stored unconditionally, independent of SYSTEM — see
+                // Runway.PrimaryApproachLightsStrobeCount's own doc comment
+                // for why (a real runway can have REIL/touchdown lights with
+                // no approach light system installed at all).
+                switch (pending.ApproachLightsSlotIndex)
+                {
+                    case 0:
+                        runwayForApproachLights.PrimaryApproachLightsStrobeCount = al.StrobeCount;
+                        runwayForApproachLights.PrimaryApproachLightsHasEndLights = al.HasEndLights != 0;
+                        runwayForApproachLights.PrimaryApproachLightsHasReilLights = al.HasReilLights != 0;
+                        runwayForApproachLights.PrimaryApproachLightsHasTouchdownLights = al.HasTouchdownLights != 0;
+                        break;
+                    case 1:
+                        runwayForApproachLights.SecondaryApproachLightsStrobeCount = al.StrobeCount;
+                        runwayForApproachLights.SecondaryApproachLightsHasEndLights = al.HasEndLights != 0;
+                        runwayForApproachLights.SecondaryApproachLightsHasReilLights = al.HasReilLights != 0;
+                        runwayForApproachLights.SecondaryApproachLightsHasTouchdownLights = al.HasTouchdownLights != 0;
+                        break;
+                }
+
                 pending.ApproachLightsSlotIndex++;
                 break;
 

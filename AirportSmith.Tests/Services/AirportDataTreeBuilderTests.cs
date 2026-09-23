@@ -9,6 +9,17 @@ public class AirportDataTreeBuilderTests
     private static DataNode Find(IEnumerable<DataNode> nodes, string prefix) =>
         Assert.Single(nodes, n => n.Text.StartsWith(prefix));
 
+    // Same idea as Find above, but boundary-aware: a plain StartsWith(prefix)
+    // would also match sibling properties that happen to share the prefix
+    // as their own leading substring (e.g. "PrimaryApproachLights" is a
+    // prefix of "PrimaryApproachLightsStrobeCount" too, once that field
+    // existed alongside the nested ApproachLightSystem record of the same
+    // base name) — this only matches the node that IS that property (a bare
+    // "{name}" header for a present nested object/record, or "{name}: ..."
+    // for a leaf/absent one), never a same-prefixed sibling.
+    private static DataNode FindExact(IEnumerable<DataNode> nodes, string name) =>
+        Assert.Single(nodes, n => n.Text == name || n.Text.StartsWith(name + ":") || n.Text.StartsWith(name + " ("));
+
     [Fact]
     public void Build_ScalarFields_RenderAsNameColonValueLeavesWithNoChildren()
     {
@@ -33,7 +44,7 @@ public class AirportDataTreeBuilderTests
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var runway = Find(Find(tree, "Runways").Children, "[1]");
-        var approachLights = Find(runway.Children, "PrimaryApproachLights");
+        var approachLights = FindExact(runway.Children, "PrimaryApproachLights");
         Assert.Equal("PrimaryApproachLights: (not present)", approachLights.Text);
         Assert.Empty(approachLights.Children);
     }
@@ -52,7 +63,7 @@ public class AirportDataTreeBuilderTests
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var runway = Find(Find(tree, "Runways").Children, "[1]");
-        var approachLights = Find(runway.Children, "PrimaryApproachLights");
+        var approachLights = FindExact(runway.Children, "PrimaryApproachLights");
         Assert.Equal("PrimaryApproachLights", approachLights.Text);
         var systemType = Assert.Single(approachLights.Children);
         Assert.Equal("SystemType: Alsf2", systemType.Text);
@@ -69,7 +80,7 @@ public class AirportDataTreeBuilderTests
         var tree = AirportDataTreeBuilder.Build(airport);
 
         var runway = Find(Find(tree, "Runways").Children, "[1]");
-        var node = Assert.Single(Find(runway.Children, "PrimaryApproachLights").Children);
+        var node = Assert.Single(FindExact(runway.Children, "PrimaryApproachLights").Children);
         Assert.Equal(expectedText, node.Text);
     }
 

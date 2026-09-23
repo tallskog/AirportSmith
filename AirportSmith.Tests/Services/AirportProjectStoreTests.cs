@@ -40,6 +40,10 @@ public class AirportProjectStoreTests
                 PrimaryLeftVasiType = VasiType.Papi4,
                 PrimaryLeftVasiAngleDeg = 3.0,
                 PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Alsf2),
+                PrimaryApproachLightsStrobeCount = 5,
+                PrimaryApproachLightsHasEndLights = true,
+                PrimaryApproachLightsHasReilLights = true,
+                PrimaryApproachLightsHasTouchdownLights = true,
             });
 
             var path = store.Save(airport);
@@ -67,6 +71,58 @@ public class AirportProjectStoreTests
             Assert.Equal(VasiType.Papi4, runway.PrimaryLeftVasiType);
             Assert.Equal(3.0, runway.PrimaryLeftVasiAngleDeg);
             Assert.Equal(ApproachLightSystemType.Alsf2, runway.PrimaryApproachLights?.SystemType);
+            Assert.Equal(5, runway.PrimaryApproachLightsStrobeCount);
+            Assert.True(runway.PrimaryApproachLightsHasEndLights);
+            Assert.True(runway.PrimaryApproachLightsHasReilLights);
+            Assert.True(runway.PrimaryApproachLightsHasTouchdownLights);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // Per CLAUDE.md's data-safety guardrail: a project file written before
+    // Runway.PrimaryApproachLightsStrobeCount/HasEndLights/HasReilLights/
+    // HasTouchdownLights (and their Secondary counterparts) existed must
+    // still load without throwing, with those new fields defaulting to
+    // false/0 — never an exception, and never silently resetting anything
+    // ELSE already in the file (PrimaryApproachLights' own SystemType is
+    // still asserted here to confirm the rest of the runway survives
+    // untouched). Writes the raw JSON directly (bypassing Save, which would
+    // always write the new fields) to genuinely simulate an older file.
+    [Fact]
+    public void Load_OlderFileWithoutApproachLightExtraFields_DefaultsThemFalseZero_AndLoadsRestUnchanged()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "EFHK.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": {
+                        "Icao": "EFHK",
+                        "Runways": [
+                            {
+                                "PrimaryDesignation": "04L",
+                                "PrimaryApproachLights": { "SystemType": 7 }
+                            }
+                        ]
+                    }
+                }
+                """);
+
+            var store = new AirportProjectStore(baseDir);
+            var loaded = store.Load("EFHK");
+
+            var runway = Assert.Single(loaded!.Runways);
+            Assert.Equal(ApproachLightSystemType.Alsf2, runway.PrimaryApproachLights?.SystemType);
+            Assert.Equal(0, runway.PrimaryApproachLightsStrobeCount);
+            Assert.False(runway.PrimaryApproachLightsHasEndLights);
+            Assert.False(runway.PrimaryApproachLightsHasReilLights);
+            Assert.False(runway.PrimaryApproachLightsHasTouchdownLights);
         }
         finally
         {

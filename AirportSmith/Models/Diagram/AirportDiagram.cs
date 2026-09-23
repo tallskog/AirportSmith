@@ -80,8 +80,41 @@ public class RunwayShape : INotifyPropertyChanged
     public required IReadOnlyList<Point2D> Corners { get; init; }
     public required Point2D PrimaryLabelPosition { get; init; }
     public required Point2D SecondaryLabelPosition { get; init; }
-    public required RunwayEndFeatures PrimaryFeatures { get; init; }
-    public required RunwayEndFeatures SecondaryFeatures { get; init; }
+
+    // Mutable (unlike every other geometry field above, which stays fixed
+    // once projected) so MainViewModel can swap in a recomputed
+    // ApproachLights after an Edit tab SystemType change — via a `with`
+    // expression on the immutable RunwayEndFeatures record itself, e.g.
+    // `PrimaryFeatures = PrimaryFeatures with { ApproachLights = updated }`
+    // — without re-running the whole projection (would reset zoom/pan/
+    // selection, same rationale as every other live-updatable shape field in
+    // this file). ThresholdMarking/BlastPad/Overrun ride along unchanged
+    // inside the same record since nothing in the Edit tab can change them
+    // yet; only ApproachLights currently needs this.
+    private RunwayEndFeatures _primaryFeatures = null!;
+    public required RunwayEndFeatures PrimaryFeatures
+    {
+        get => _primaryFeatures;
+        set
+        {
+            if (_primaryFeatures == value) return;
+            _primaryFeatures = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PrimaryFeatures)));
+        }
+    }
+
+    private RunwayEndFeatures _secondaryFeatures = null!;
+    public required RunwayEndFeatures SecondaryFeatures
+    {
+        get => _secondaryFeatures;
+        set
+        {
+            if (_secondaryFeatures == value) return;
+            _secondaryFeatures = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SecondaryFeatures)));
+        }
+    }
+
     public required int SourceIndex { get; init; }
 
     private bool _isVisible = true;

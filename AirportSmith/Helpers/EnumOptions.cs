@@ -17,8 +17,29 @@ public static class EnumOptions
     public static readonly IReadOnlyList<VasiType?> VasiTypes =
         new VasiType?[] { null }.Concat(Enum.GetValues<VasiType>().Cast<VasiType?>()).ToList();
 
-    public static readonly IReadOnlyList<ApproachLightSystemType?> ApproachLightSystemTypes =
-        new ApproachLightSystemType?[] { null }.Concat(Enum.GetValues<ApproachLightSystemType>().Cast<ApproachLightSystemType?>()).ToList();
+    // Label/Value pairs (not a plain enum list, unlike VasiTypes above) so
+    // the two systems whose plain enum name reads ambiguously on its own —
+    // CALVERT and CALVERT2 — can show the informal name a real controller/
+    // chart would use for them (per the user's own request) without
+    // changing every other system's plain name. Bound via SelectedValuePath
+    // (not SelectedItem, unlike VasiTypes' ComboBox), so
+    // RunwayEditViewModel.PrimarySystemType/SecondarySystemType stay a
+    // plain ApproachLightSystemType? — this only changes how the picker
+    // DISPLAYS each option, not what value it reads/writes.
+    public static readonly IReadOnlyList<ApproachLightSystemOption> ApproachLightSystemTypeOptions =
+        new ApproachLightSystemType?[] { null }.Concat(Enum.GetValues<ApproachLightSystemType>().Cast<ApproachLightSystemType?>())
+            .Select(t => new ApproachLightSystemOption(t, ApproachLightSystemLabel(t)))
+            .ToList();
+
+    // Null displays as blank, same as the plain-enum ComboBoxes' own
+    // ToString()-based null display elsewhere in this file.
+    private static string ApproachLightSystemLabel(ApproachLightSystemType? type) => type switch
+    {
+        null => string.Empty,
+        ApproachLightSystemType.Calvert => "Calvert (PALS)",
+        ApproachLightSystemType.Calvert2 => "Calvert2 (PALS CAT II)",
+        _ => type.Value.ToString(),
+    };
 
     public static readonly IReadOnlyList<TaxiPathType> TaxiPathTypes = Enum.GetValues<TaxiPathType>();
 
@@ -89,6 +110,9 @@ public static class EnumOptions
 
 // See EnumOptions.BoolFilterOptions.
 public sealed record BoolFilterOption(string Label, bool? Value);
+
+// See EnumOptions.ApproachLightSystemTypeOptions.
+public sealed record ApproachLightSystemOption(ApproachLightSystemType? Value, string Label);
 
 // One SDK int code plus its label, for ComboBoxes bound via
 // SelectedValuePath="Code" DisplayMemberPath="Label" — see

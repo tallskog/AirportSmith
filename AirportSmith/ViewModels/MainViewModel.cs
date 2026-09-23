@@ -118,6 +118,27 @@ public class MainViewModel : ViewModelBase
         private set => SetField(ref _runwayEdits, value);
     }
 
+    // The Runways grid's own single-row selection, backing the details
+    // panel below it (Lights/Primary+Secondary Approach Lights/4 VASI
+    // slots as Expander sections) — moved out of that always-visible wide
+    // grid specifically because scrolling through ~30 columns to find one
+    // field was reported as tedious. Null means nothing selected (or
+    // nothing loaded yet), and the details panel's own Visibility binds to
+    // this being non-null. A plain two-way SelectedItem binding on the
+    // DataGrid (see MainWindow.xaml) is all that's needed to keep this in
+    // sync — no code-behind SelectionChanged handler, unlike the Taxi Paths
+    // grid's multi-select (TaxiPathsGrid_SelectionChanged), since this grid
+    // only ever needs one runway's details open at a time. Reset to null in
+    // SetAirport (see its own call site) since RunwayEdits is rebuilt fresh
+    // on every load/reload — leaving this pointed at an instance from the
+    // PREVIOUS airport would silently show stale details.
+    private RunwayEditViewModel? _selectedRunwayEdit;
+    public RunwayEditViewModel? SelectedRunwayEdit
+    {
+        get => _selectedRunwayEdit;
+        set => SetField(ref _selectedRunwayEdit, value);
+    }
+
     // Read/edit view over every distinct sim TAXI_POINT index resolved from
     // Airport.TaxiPaths — see TaxiwayPointEditViewModel.BuildAll. The
     // diagram's own TaxiwayPoints are computed independently by
@@ -521,6 +542,7 @@ public class MainViewModel : ViewModelBase
             _armedParkingPlacement = null;
             RaiseParkingPlacementChanged();
         }
+        SelectedRunwayEdit = null;
 
         // Skipped entirely when the Id set/order already matches — see
         // SyncTaxiNames's own doc comment for why unconditionally
@@ -1144,8 +1166,51 @@ public class MainViewModel : ViewModelBase
         if (e.PropertyName == nameof(RunwayEditViewModel.IsHiddenFromDiagram))
             RefreshAllRunwayVisibility();
 
-        if (sender is RunwayEditViewModel edit && VasiSlotForProperty(e.PropertyName) is { } slot)
+        if (sender is not RunwayEditViewModel edit) return;
+
+        if (VasiSlotForProperty(e.PropertyName) is { } slot)
             RefreshVasiShape(edit, slot);
+
+        if (ApproachLightsIsPrimaryForProperty(e.PropertyName) is { } isPrimary)
+            RefreshApproachLightsShape(edit, isPrimary);
+    }
+
+    // Maps a changed RunwayEditViewModel property to which end's approach
+    // lights it affects — mirrors VasiSlotForProperty just above, one level
+    // simpler since there's only Primary/SecondaryApproachLights' own
+    // SystemType to react to (no separate bias/spacing fields the way
+    // VASI/PAPI has).
+    private static bool? ApproachLightsIsPrimaryForProperty(string? propertyName) => propertyName switch
+    {
+        nameof(RunwayEditViewModel.PrimarySystemType) => true,
+        nameof(RunwayEditViewModel.SecondarySystemType) => false,
+        _ => null,
+    };
+
+    // Pushes a recomputed ApproachLights straight onto the one end
+    // (Primary/SecondaryFeatures) this edit/end corresponds to, instead of
+    // re-running the whole projection — see RunwayShape.PrimaryFeatures'
+    // own doc comment for why, same "recompute just this one thing" pattern
+    // RefreshVasiShape/RefreshParkingShape/RefreshParkingLeadingTaxiways
+    // already use. A `with` expression on the immutable RunwayEndFeatures
+    // record swaps in the new ApproachLights (possibly null, e.g. the user
+    // just picked "None") while leaving that end's other features
+    // (ThresholdMarking/BlastPad/Overrun, none of which are Edit-tab-
+    // editable yet) untouched.
+    private void RefreshApproachLightsShape(RunwayEditViewModel edit, bool isPrimary)
+    {
+        if (Diagram is null || Airport is null) return;
+        var runwayIndex = IndexOfRunwayEdit(edit);
+        if (runwayIndex < 0) return;
+
+        var shape = Diagram.Runways.FirstOrDefault(r => r.SourceIndex == runwayIndex);
+        if (shape is null) return;
+
+        var updated = AirportDiagramProjector.ComputeApproachLightsPlacement(Diagram, Airport, runwayIndex, isPrimary);
+        if (isPrimary)
+            shape.PrimaryFeatures = shape.PrimaryFeatures with { ApproachLights = updated };
+        else
+            shape.SecondaryFeatures = shape.SecondaryFeatures with { ApproachLights = updated };
     }
 
     private void RefreshAllRunwayVisibility()

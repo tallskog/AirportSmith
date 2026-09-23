@@ -79,4 +79,30 @@ public class Runway
     // all — see SimConnectService.FacilityApproachLightsData's comment.
     public ApproachLightSystem? PrimaryApproachLights { get; set; }
     public ApproachLightSystem? SecondaryApproachLights { get; set; }
+
+    // APPROACH_LIGHTS' STROBE_COUNT/HAS_END_LIGHTS/HAS_REIL_LIGHTS/
+    // HAS_TOUCHDOWN_LIGHTS per the SDK docs — kept as flat properties
+    // directly on Runway (like the VASI Bias/Spacing fields above) rather
+    // than folded into ApproachLightSystem, deliberately: unlike SystemType,
+    // these are genuinely independent of whether a full approach light
+    // system is installed at all (a real, fairly common runway has REIL or
+    // touchdown lights with no approach light system whatsoever), so tying
+    // their presence to PrimaryApproachLights/SecondaryApproachLights being
+    // non-null would make that real-world case unrepresentable. Plain
+    // bool/int (not nullable), default false/0 — same "always resolved,
+    // never ambiguous" convention as EdgeLightIntensity/
+    // TaxiPathSegment.LeftEdgeLighted above/elsewhere, since SimConnect
+    // reports a real 0/1 or count for these regardless of SYSTEM, and 0/false
+    // is exactly what "missing from an older saved project" should default
+    // to as well. Added purely additively, so older saved projects keep
+    // deserializing unchanged (see the VASI Bias/Spacing fields' own comment
+    // for this same convention).
+    public int PrimaryApproachLightsStrobeCount { get; set; }
+    public bool PrimaryApproachLightsHasEndLights { get; set; }
+    public bool PrimaryApproachLightsHasReilLights { get; set; }
+    public bool PrimaryApproachLightsHasTouchdownLights { get; set; }
+    public int SecondaryApproachLightsStrobeCount { get; set; }
+    public bool SecondaryApproachLightsHasEndLights { get; set; }
+    public bool SecondaryApproachLightsHasReilLights { get; set; }
+    public bool SecondaryApproachLightsHasTouchdownLights { get; set; }
 }

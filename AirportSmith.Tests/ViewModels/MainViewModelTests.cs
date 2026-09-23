@@ -962,6 +962,41 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void SelectedRunwayEdit_DefaultsNull_AndIsSettableToAnyRunwayEdit()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.Runways.Add(new Runway { PrimaryDesignation = "04L" });
+        var vm = CreateViewModelWithAirport(airport);
+        Assert.Null(vm.SelectedRunwayEdit);
+
+        vm.SelectedRunwayEdit = vm.RunwayEdits[0];
+
+        Assert.Same(vm.RunwayEdits[0], vm.SelectedRunwayEdit);
+    }
+
+    // Reloading rebuilds RunwayEdits from scratch (see SetAirport) — a
+    // SelectedRunwayEdit still pointing at an instance from the PREVIOUS
+    // load would silently show stale details in the Runways section's
+    // details panel (MainWindow.xaml), so it must be reset. Same
+    // reload-the-same-project pattern as
+    // LoadingAnotherAirport_DisarmsParkingPlacement_AndResetsHideAll above.
+    [Fact]
+    public void ReloadingProject_ClearsSelectedRunwayEdit()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.Runways.Add(new Runway { PrimaryDesignation = "04L" });
+        var store = new FakeAirportProjectStore();
+        store.Save(airport);
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store) { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+        vm.SelectedRunwayEdit = vm.RunwayEdits[0];
+
+        vm.LoadProjectCommand.Execute(null);
+
+        Assert.Null(vm.SelectedRunwayEdit);
+    }
+
+    [Fact]
     public void IsXmlExportAvailable_RequiresBothExporterAndDialogService()
     {
         Assert.False(new MainViewModel(new FakeSimConnectService()).IsXmlExportAvailable);
@@ -1355,6 +1390,41 @@ public class MainViewModelTests
         // reflected on the diagram shape without any further action.
         Assert.Equal(100, shape.Position.X, 3);
         Assert.Equal(750, shape.Position.Y, 3);
+    }
+
+    // User-reported gap: enabling a runway's approach light system via the
+    // Edit tab's SystemType picker didn't show up on the diagram at all
+    // without a reload — RunwayShape.PrimaryFeatures/SecondaryFeatures were
+    // computed once at load and never refreshed (unlike VASI's own
+    // IsInstalled toggle, tested just above, which already worked live).
+    [Fact]
+    public void SettingApproachLightSystemTypeThroughEditViewModel_ShowsUpOnDiagramImmediately()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportForVasiPlacement());
+        var runway = Assert.Single(vm.Diagram!.Runways);
+        Assert.Null(runway.PrimaryFeatures.ApproachLights);
+
+        vm.RunwayEdits[0].PrimarySystemType = ApproachLightSystemType.Malsr;
+
+        var lights = runway.PrimaryFeatures.ApproachLights;
+        Assert.NotNull(lights);
+        Assert.NotEmpty(lights!.RailLights);
+        // Untouched — only the Primary end changed.
+        Assert.Null(runway.SecondaryFeatures.ApproachLights);
+    }
+
+    [Fact]
+    public void ClearingApproachLightSystemTypeThroughEditViewModel_RemovesItFromDiagramImmediately()
+    {
+        var airport = BuildAirportForVasiPlacement();
+        airport.Runways[0].SecondaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Odals);
+        var vm = CreateViewModelWithAirport(airport);
+        var runway = Assert.Single(vm.Diagram!.Runways);
+        Assert.NotNull(runway.SecondaryFeatures.ApproachLights);
+
+        vm.RunwayEdits[0].SecondarySystemType = null;
+
+        Assert.Null(runway.SecondaryFeatures.ApproachLights);
     }
 
     // Three spots spread across the canvas; airport-reference (0,0) with no

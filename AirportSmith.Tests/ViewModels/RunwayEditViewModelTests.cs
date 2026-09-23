@@ -47,6 +47,58 @@ public class RunwayEditViewModelTests
         Assert.Null(vm.PrimarySystemType);
     }
 
+    // Independent of PrimarySystemType/SecondarySystemType (see
+    // Runway.PrimaryApproachLightsStrobeCount's own doc comment) — settable
+    // and readable with no approach light system chosen at all, unlike
+    // SettingSystemTypeToNull_ClearsApproachLightSystemRecord above (which
+    // NEEDS a SystemType to exist as a host).
+    [Fact]
+    public void SettingApproachLightExtras_WritesThroughToWrappedRunway_WithNoSystemTypeChosen()
+    {
+        var runway = new Runway();
+        var vm = new RunwayEditViewModel(runway);
+        Assert.Null(vm.PrimarySystemType);
+
+        vm.PrimaryApproachLightsStrobeCount = 5;
+        vm.PrimaryApproachLightsHasEndLights = true;
+        vm.PrimaryApproachLightsHasReilLights = true;
+        vm.PrimaryApproachLightsHasTouchdownLights = true;
+        vm.SecondaryApproachLightsStrobeCount = 3;
+        vm.SecondaryApproachLightsHasEndLights = true;
+        vm.SecondaryApproachLightsHasReilLights = true;
+        vm.SecondaryApproachLightsHasTouchdownLights = true;
+
+        Assert.Null(vm.PrimarySystemType); // still not set — these are independent
+        Assert.Equal(5, runway.PrimaryApproachLightsStrobeCount);
+        Assert.True(runway.PrimaryApproachLightsHasEndLights);
+        Assert.True(runway.PrimaryApproachLightsHasReilLights);
+        Assert.True(runway.PrimaryApproachLightsHasTouchdownLights);
+        Assert.Equal(3, runway.SecondaryApproachLightsStrobeCount);
+        Assert.True(runway.SecondaryApproachLightsHasEndLights);
+        Assert.True(runway.SecondaryApproachLightsHasReilLights);
+        Assert.True(runway.SecondaryApproachLightsHasTouchdownLights);
+        Assert.Equal(5, vm.PrimaryApproachLightsStrobeCount);
+        Assert.True(vm.PrimaryApproachLightsHasEndLights);
+    }
+
+    [Fact]
+    public void SettingApproachLightExtras_RaisesPropertyChanged()
+    {
+        var vm = new RunwayEditViewModel(new Runway());
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.PrimaryApproachLightsStrobeCount = 5;
+        vm.PrimaryApproachLightsHasEndLights = true;
+        vm.PrimaryApproachLightsHasReilLights = true;
+        vm.PrimaryApproachLightsHasTouchdownLights = true;
+
+        Assert.Contains(nameof(RunwayEditViewModel.PrimaryApproachLightsStrobeCount), raised);
+        Assert.Contains(nameof(RunwayEditViewModel.PrimaryApproachLightsHasEndLights), raised);
+        Assert.Contains(nameof(RunwayEditViewModel.PrimaryApproachLightsHasReilLights), raised);
+        Assert.Contains(nameof(RunwayEditViewModel.PrimaryApproachLightsHasTouchdownLights), raised);
+    }
+
     [Fact]
     public void SettingProperty_RaisesPropertyChanged()
     {

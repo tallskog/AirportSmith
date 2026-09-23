@@ -162,8 +162,10 @@ public class AirportXmlExporter : IAirportXmlExporter
         AddPavementFeature(element, "Overrun", "PRIMARY", r.PrimaryOverrun);
         AddPavementFeature(element, "Overrun", "SECONDARY", r.SecondaryOverrun);
 
-        AddApproachLights(element, "PRIMARY", r.PrimaryApproachLights);
-        AddApproachLights(element, "SECONDARY", r.SecondaryApproachLights);
+        AddApproachLights(element, "PRIMARY", r.PrimaryApproachLights?.SystemType, r.PrimaryApproachLightsStrobeCount,
+            r.PrimaryApproachLightsHasEndLights, r.PrimaryApproachLightsHasReilLights, r.PrimaryApproachLightsHasTouchdownLights);
+        AddApproachLights(element, "SECONDARY", r.SecondaryApproachLights?.SystemType, r.SecondaryApproachLightsStrobeCount,
+            r.SecondaryApproachLightsHasEndLights, r.SecondaryApproachLightsHasReilLights, r.SecondaryApproachLightsHasTouchdownLights);
 
         AddVasi(element, "PRIMARY", "LEFT", r.PrimaryLeftVasiType, r.PrimaryLeftVasiAngleDeg,
             r.PrimaryLeftVasiBiasXMeters, r.PrimaryLeftVasiBiasZMeters, r.PrimaryLeftVasiSpacingMeters, r.LengthMeters, warnings);
@@ -189,12 +191,34 @@ public class AirportXmlExporter : IAirportXmlExporter
             new XAttribute("width", F(feature.WidthMeters))));
     }
 
-    private static void AddApproachLights(XElement runwayElement, string end, ApproachLightSystem? lights)
+    // systemType and strobeCount/hasEndLights/hasReilLights/hasTouchdownLights
+    // are independent (see Runway.PrimaryApproachLightsStrobeCount's own doc
+    // comment) — the element itself is only emitted when there's SOMETHING
+    // to report (matching <Vasi>/<BlastPad>/<Overrun>'s own "omit entirely
+    // when nothing installed" convention), which now includes a runway end
+    // with REIL/end/touchdown lights or strobes but no full approach light
+    // system at all — the `system` attribute is genuinely optional per the
+    // SDK's own <ApproachLights/> docs and is simply left off in that case.
+    // reil/endLights/touchdown are always written once the element exists
+    // (TRUE/FALSE via ToXmlBool), matching centerLineLighted/leftEdgeLighted/
+    // rightEdgeLighted's own "always explicit, never omitted" convention on
+    // <TaxiwayPath> — strobes likewise always written (even "0"), since a
+    // Positive Integer attribute stating a real, meaningful "none" is more
+    // useful than an ambiguous omission.
+    private static void AddApproachLights(XElement runwayElement, string end, ApproachLightSystemType? systemType,
+        int strobeCount, bool hasEndLights, bool hasReilLights, bool hasTouchdownLights)
     {
-        if (lights is null) return;
-        runwayElement.Add(new XElement("ApproachLights",
+        if (systemType is null && strobeCount <= 0 && !hasEndLights && !hasReilLights && !hasTouchdownLights) return;
+
+        var element = new XElement("ApproachLights",
             new XAttribute("end", end),
-            new XAttribute("system", MapApproachLightSystem(lights.SystemType))));
+            new XAttribute("reil", ToXmlBool(hasReilLights)),
+            new XAttribute("strobes", strobeCount.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("endLights", ToXmlBool(hasEndLights)),
+            new XAttribute("touchdown", ToXmlBool(hasTouchdownLights)));
+        if (systemType is not null) element.Add(new XAttribute("system", MapApproachLightSystem(systemType.Value)));
+
+        runwayElement.Add(element);
     }
 
     private static void AddVasi(XElement runwayElement, string end, string side, VasiType? type, double? angleDeg,

@@ -564,10 +564,14 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Heading" Width="65" Binding="{Binding HeadingDeg, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <DataGridTextColumn Header="Radius" Width="55" Binding="{Binding RadiusMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <DataGridTextColumn Header="X (m)" Width="65" Binding="{Binding BiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <DataGridTextColumn Header="Z (m)" Width="65" Binding="{Binding BiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <!-- Deliberately NOT UpdateSourceTrigger=PropertyChanged, unlike this
+                                         grid's ComboBox columns above — see the identical comment on the
+                                         Runways grid's VASI Angle/X/Z/Spacing columns below for why a
+                                         free-typed decimal column needs the opposite default. -->
+                                    <DataGridTextColumn Header="Heading" Width="65" Binding="{Binding HeadingDeg}"/>
+                                    <DataGridTextColumn Header="Radius" Width="55" Binding="{Binding RadiusMeters}"/>
+                                    <DataGridTextColumn Header="X (m)" Width="65" Binding="{Binding BiasXMeters}"/>
+                                    <DataGridTextColumn Header="Z (m)" Width="65" Binding="{Binding BiasZMeters}"/>
                                     <DataGridTemplateColumn Header="Pos" Width="55">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
@@ -580,9 +584,20 @@
                                 </DataGrid.Columns>
                             </DataGrid>
 
+                    <!-- Was one wide DataGrid with ~30 columns (VASI's 4 slots x 5 fields
+                         each, 2 approach-light ends x 5 fields each) — reported as tedious
+                         to scroll left/right to find a field. Restructured into a compact
+                         summary grid (just Hide/Primary/Secondary/Edge Lights, the fields
+                         worth scanning across every runway at a glance) plus a details panel
+                         below for whichever ONE runway is selected, its Lights/Approach
+                         Lights/VASI sections grouped into collapsible Expanders that mirror
+                         the SDK's own <Runway> XML sub-element structure (Lights,
+                         ApproachLights x2, Vasi x4) — see MainViewModel.SelectedRunwayEdit's
+                         own doc comment for the selection wiring. -->
                     <TextBlock Text="Runways" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <DataGrid AutoGenerateColumns="False" CanUserAddRows="False"
-                              ItemsSource="{Binding DataContext.RunwayEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                    <DataGrid AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" SelectionUnit="FullRow"
+                              ItemsSource="{Binding DataContext.RunwayEdits, RelativeSource={RelativeSource AncestorType=Window}}"
+                              SelectedItem="{Binding DataContext.SelectedRunwayEdit, RelativeSource={RelativeSource AncestorType=Window}}">
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="Hide from Diagram" Width="120">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -601,108 +616,191 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Pri L VASI" Width="90">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
-                                                  SelectedItem="{Binding PrimaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Pri L Angle" Width="70" Binding="{Binding PrimaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri L X" Width="55" Binding="{Binding PrimaryLeftVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri L Z" Width="55" Binding="{Binding PrimaryLeftVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri L Spacing" Width="60" Binding="{Binding PrimaryLeftVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTemplateColumn Header="Pri L Pos" Width="55">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Content="Place"
-                                                Command="{Binding DataContext.ArmPrimaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Pri R VASI" Width="90">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
-                                                  SelectedItem="{Binding PrimaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Pri R Angle" Width="70" Binding="{Binding PrimaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri R X" Width="55" Binding="{Binding PrimaryRightVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri R Z" Width="55" Binding="{Binding PrimaryRightVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Pri R Spacing" Width="60" Binding="{Binding PrimaryRightVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTemplateColumn Header="Pri R Pos" Width="55">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Content="Place"
-                                                Command="{Binding DataContext.ArmPrimaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Sec L VASI" Width="90">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
-                                                  SelectedItem="{Binding SecondaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Sec L Angle" Width="70" Binding="{Binding SecondaryLeftVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec L X" Width="55" Binding="{Binding SecondaryLeftVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec L Z" Width="55" Binding="{Binding SecondaryLeftVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec L Spacing" Width="60" Binding="{Binding SecondaryLeftVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTemplateColumn Header="Sec L Pos" Width="55">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Content="Place"
-                                                Command="{Binding DataContext.ArmSecondaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Sec R VASI" Width="90">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
-                                                  SelectedItem="{Binding SecondaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Sec R Angle" Width="70" Binding="{Binding SecondaryRightVasiAngleDeg, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec R X" Width="55" Binding="{Binding SecondaryRightVasiBiasXMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec R Z" Width="55" Binding="{Binding SecondaryRightVasiBiasZMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="Sec R Spacing" Width="60" Binding="{Binding SecondaryRightVasiSpacingMeters, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTemplateColumn Header="Sec R Pos" Width="55">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Content="Place"
-                                                Command="{Binding DataContext.ArmSecondaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Pri Approach Lights" Width="130">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypes}"
-                                                  SelectedItem="{Binding PrimarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Sec Approach Lights" Width="130">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ComboBox ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypes}"
-                                                  SelectedItem="{Binding SecondarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            </DataGrid.Columns>
-                            </DataGrid>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Select a runway above to edit its approach lights/VASI." FontStyle="Italic" Foreground="Gray" Margin="0,6,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.SelectedRunwayEdit, RelativeSource={RelativeSource AncestorType=Window}}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- DataContext is the selected RunwayEditViewModel itself (not the
+                         Window/MainViewModel), so every binding below is a direct property
+                         path (PrimarySystemType, not SelectedRunwayEdit.PrimarySystemType) —
+                         same as a DataGrid row's own DataTemplate. Collapsed via a null
+                         DataTrigger on its OWN DataContext (see the {Binding} with no path
+                         below) rather than a converter, matching this file's existing
+                         DataTrigger-over-converter preference for simple visibility toggles. -->
+                    <StackPanel Margin="0,6,0,0"
+                                DataContext="{Binding DataContext.SelectedRunwayEdit, RelativeSource={RelativeSource AncestorType=Window}}">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <TextBlock Margin="0,0,0,6" FontWeight="SemiBold">
+                            <Run Text="Editing:"/>
+                            <Run Text="{Binding PrimaryDesignation, Mode=OneWay}"/>
+                            <Run Text="/"/>
+                            <Run Text="{Binding SecondaryDesignation, Mode=OneWay}"/>
+                        </TextBlock>
+
+                        <!-- Angle/X/Z/Spacing/Strobes TextBoxes below deliberately do NOT set
+                             UpdateSourceTrigger=PropertyChanged, unlike the CheckBoxes/
+                             ComboBoxes here — confirmed via live testing to be a real,
+                             reported bug otherwise: with PropertyChanged, EVERY keystroke
+                             pushes the partial text into the double?/int property; once "2."
+                             (or "2,") parses successfully as 2.0, the property's own
+                             OnPropertyChanged() immediately refreshes the TextBox from the
+                             now-current source value, which formats back to plain "2" —
+                             stripping the separator the instant it's typed, before a
+                             fractional digit can ever follow it. Plain TextBox.Text already
+                             defaults to LostFocus (same fix as the Parking Spots/VASI grid
+                             columns elsewhere in this file), so simply not overriding it here
+                             is the fix — the live diagram sync these properties' own setters
+                             still trigger (RefreshVasiShape/RefreshApproachLightsShape) now
+                             fires once, when the field loses focus with a complete value. -->
+                        <Expander Header="Primary Approach Lights" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="System:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypeOptions}"
+                                              DisplayMemberPath="Label" SelectedValuePath="Value"
+                                              SelectedValue="{Binding PrimarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Text="Strobes:" Width="55" Margin="16,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryApproachLightsStrobeCount}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <CheckBox Content="REIL" Margin="0,0,16,0" IsChecked="{Binding PrimaryApproachLightsHasReilLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="End Lights" Margin="0,0,16,0" IsChecked="{Binding PrimaryApproachLightsHasEndLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="Touchdown" IsChecked="{Binding PrimaryApproachLightsHasTouchdownLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Secondary Approach Lights" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="System:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.ApproachLightSystemTypeOptions}"
+                                              DisplayMemberPath="Label" SelectedValuePath="Value"
+                                              SelectedValue="{Binding SecondarySystemType, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Text="Strobes:" Width="55" Margin="16,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryApproachLightsStrobeCount}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <CheckBox Content="REIL" Margin="0,0,16,0" IsChecked="{Binding SecondaryApproachLightsHasReilLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="End Lights" Margin="0,0,16,0" IsChecked="{Binding SecondaryApproachLightsHasEndLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="Touchdown" IsChecked="{Binding SecondaryApproachLightsHasTouchdownLights, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Primary Left VASI" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Type:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                              SelectedItem="{Binding PrimaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Angle:" Width="45" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryLeftVasiAngleDeg}"/>
+                                    <TextBlock Text="X:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryLeftVasiBiasXMeters}"/>
+                                    <TextBlock Text="Z:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryLeftVasiBiasZMeters}"/>
+                                    <TextBlock Text="Spacing:" Width="48" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryLeftVasiSpacingMeters}"/>
+                                </StackPanel>
+                                <Button Content="Place" HorizontalAlignment="Left" Padding="8,1"
+                                        Command="{Binding DataContext.ArmPrimaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Primary Right VASI" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Type:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                              SelectedItem="{Binding PrimaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Angle:" Width="45" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryRightVasiAngleDeg}"/>
+                                    <TextBlock Text="X:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryRightVasiBiasXMeters}"/>
+                                    <TextBlock Text="Z:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryRightVasiBiasZMeters}"/>
+                                    <TextBlock Text="Spacing:" Width="48" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding PrimaryRightVasiSpacingMeters}"/>
+                                </StackPanel>
+                                <Button Content="Place" HorizontalAlignment="Left" Padding="8,1"
+                                        Command="{Binding DataContext.ArmPrimaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Secondary Left VASI" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Type:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                              SelectedItem="{Binding SecondaryLeftVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Angle:" Width="45" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryLeftVasiAngleDeg}"/>
+                                    <TextBlock Text="X:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryLeftVasiBiasXMeters}"/>
+                                    <TextBlock Text="Z:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryLeftVasiBiasZMeters}"/>
+                                    <TextBlock Text="Spacing:" Width="48" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryLeftVasiSpacingMeters}"/>
+                                </StackPanel>
+                                <Button Content="Place" HorizontalAlignment="Left" Padding="8,1"
+                                        Command="{Binding DataContext.ArmSecondaryLeftVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Secondary Right VASI" Margin="0,0,0,4">
+                            <StackPanel Margin="20,6,0,6">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Type:" Width="60" VerticalAlignment="Center"/>
+                                    <ComboBox Width="150" ItemsSource="{x:Static helpers:EnumOptions.VasiTypes}"
+                                              SelectedItem="{Binding SecondaryRightVasiType, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="Angle:" Width="45" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryRightVasiAngleDeg}"/>
+                                    <TextBlock Text="X:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryRightVasiBiasXMeters}"/>
+                                    <TextBlock Text="Z:" Width="20" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryRightVasiBiasZMeters}"/>
+                                    <TextBlock Text="Spacing:" Width="48" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    <TextBox Width="50" Text="{Binding SecondaryRightVasiSpacingMeters}"/>
+                                </StackPanel>
+                                <Button Content="Place" HorizontalAlignment="Left" Padding="8,1"
+                                        Command="{Binding DataContext.ArmSecondaryRightVasiPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
 

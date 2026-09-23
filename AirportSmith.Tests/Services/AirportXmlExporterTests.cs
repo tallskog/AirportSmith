@@ -102,6 +102,10 @@ public class AirportXmlExporterTests
         runway.SecondaryBlastPad = new RunwayPavementFeature(15, 45);
         runway.SecondaryOverrun = new RunwayPavementFeature(25, 45);
         runway.PrimaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Alsf2);
+        runway.PrimaryApproachLightsStrobeCount = 5;
+        runway.PrimaryApproachLightsHasEndLights = true;
+        runway.PrimaryApproachLightsHasReilLights = true;
+        runway.PrimaryApproachLightsHasTouchdownLights = true;
         runway.SecondaryApproachLights = new ApproachLightSystem(ApproachLightSystemType.Odals);
         runway.PrimaryLeftVasiType = VasiType.Papi4;
         runway.PrimaryLeftVasiAngleDeg = 3.0;
@@ -121,8 +125,22 @@ public class AirportXmlExporterTests
 
         var approachLights = runwayElement.Elements("ApproachLights").ToList();
         Assert.Equal(2, approachLights.Count);
-        Assert.Equal("ALSF2", approachLights.Single(e => e.Attribute("end")!.Value == "PRIMARY").Attribute("system")!.Value);
-        Assert.Equal("ODALS", approachLights.Single(e => e.Attribute("end")!.Value == "SECONDARY").Attribute("system")!.Value);
+        var primaryApproachLights = approachLights.Single(e => e.Attribute("end")!.Value == "PRIMARY");
+        var secondaryApproachLights = approachLights.Single(e => e.Attribute("end")!.Value == "SECONDARY");
+        Assert.Equal("ALSF2", primaryApproachLights.Attribute("system")!.Value);
+        Assert.Equal("ODALS", secondaryApproachLights.Attribute("system")!.Value);
+        // reil/strobes/endLights/touchdown are independent of system (see
+        // Runway.PrimaryApproachLightsStrobeCount's own doc comment) — set
+        // on PRIMARY only, so SECONDARY's own (all-default) values confirm
+        // they're not accidentally cross-wired between ends.
+        Assert.Equal("TRUE", primaryApproachLights.Attribute("reil")!.Value);
+        Assert.Equal("5", primaryApproachLights.Attribute("strobes")!.Value);
+        Assert.Equal("TRUE", primaryApproachLights.Attribute("endLights")!.Value);
+        Assert.Equal("TRUE", primaryApproachLights.Attribute("touchdown")!.Value);
+        Assert.Equal("FALSE", secondaryApproachLights.Attribute("reil")!.Value);
+        Assert.Equal("0", secondaryApproachLights.Attribute("strobes")!.Value);
+        Assert.Equal("FALSE", secondaryApproachLights.Attribute("endLights")!.Value);
+        Assert.Equal("FALSE", secondaryApproachLights.Attribute("touchdown")!.Value);
 
         var offsetThresholds = runwayElement.Elements("OffsetThreshold").ToList();
         var blastPads = runwayElement.Elements("BlastPad").ToList();
@@ -150,6 +168,34 @@ public class AirportXmlExporterTests
         Assert.Equal(3.0, ParseD(vasi.Attribute("pitch")!.Value), 3);
 
         Assert.Equal(2, runwayElement.Elements("RunwayStart").Count());
+    }
+
+    // A runway can have REIL (or touchdown/end lights, or strobes) with no
+    // full approach light system installed at all — a real, fairly common
+    // configuration this app now supports since these fields were made
+    // independent of PrimarySystemType/SecondarySystemType (see
+    // Runway.PrimaryApproachLightsStrobeCount's own doc comment). The
+    // <ApproachLights> element must still be emitted for that end (just
+    // without a system attribute), not silently dropped because SystemType
+    // is null.
+    [Fact]
+    public void Build_RunwayWithReilOnly_NoApproachLightSystem_StillEmitsApproachLightsElement()
+    {
+        var runway = BareRunway();
+        runway.PrimaryApproachLightsHasReilLights = true;
+
+        var airport = Airport(a => a.Runways.Add(runway));
+
+        var runwayElement = AirportXmlExporter.Build(airport).Document
+            .Root!.Element("Airport")!.Element("Runway")!;
+
+        var approachLights = Assert.Single(runwayElement.Elements("ApproachLights"));
+        Assert.Equal("PRIMARY", approachLights.Attribute("end")!.Value);
+        Assert.Null(approachLights.Attribute("system"));
+        Assert.Equal("TRUE", approachLights.Attribute("reil")!.Value);
+        Assert.Equal("0", approachLights.Attribute("strobes")!.Value);
+        Assert.Equal("FALSE", approachLights.Attribute("endLights")!.Value);
+        Assert.Equal("FALSE", approachLights.Attribute("touchdown")!.Value);
     }
 
     [Fact]

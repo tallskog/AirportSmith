@@ -2497,3 +2497,223 @@ taxi network's data stays internally consistent.
   The confirmation dialog's real WPF `MessageBox` and the Delete key itself
   (real keyboard input) are not covered by automated tests — verified
   manually, same exclusion category as `DeleteSelectedParkingSpots`' own.
+
+## Bug fix: enabling a runway's approach light system didn't show up on the diagram (2026-09-23)
+
+**User-reported symptom:** picking an approach light system type for a
+runway end in the Edit tab's Runways grid (the `Pri`/`Sec Approach Lights`
+`ComboBox` columns, bound to `RunwayEditViewModel.PrimarySystemType`/
+`SecondarySystemType`) didn't draw the schematic light rail on the diagram —
+only a reload picked it up. Clearing one back to "None" had the same gap in
+reverse (the rail stayed drawn).
+
+**Root cause:** same class of bug as the two Parking-related fixes just
+above (`RunwayShape.PrimaryFeatures`/`SecondaryFeatures` were `init`-only,
+computed once by `AirportDiagramProjector.Project` at load time). Every
+*other* runway-end field the Edit tab can change already had its own
+live-refresh path (`IsHiddenFromDiagram` → `RefreshAllRunwayVisibility`,
+each VASI/PAPI field → `RefreshVasiShape`), but nothing mapped
+`PrimarySystemType`/`SecondarySystemType` to a refresh at all — VASI's own
+"changing Type flips a pre-created shape's `IsInstalled`" trick doesn't
+apply here, since `ApproachLightSystemShape` (rail lights + crossbar) isn't
+pre-created the way `VasiShape` is; it either exists or doesn't.
+
+**Fix:**
+- `AirportDiagramProjector`'s approach-lights math (previously a local
+  function closing over `Project`'s own loop state) is now a standalone
+  `ComputeApproachLightsWorking`, reusable outside `Project`'s loop — same
+  "extract the pure math so both the bulk pass and a live recompute agree"
+  precedent as `BuildTaxiwayWidthCorners`. New public
+  `ComputeApproachLightsPlacement(diagram, airport, runwayIndex, isPrimary)`
+  recomputes just one end's `ApproachLightSystemShape?` (`null` when that
+  end has no system installed), mirroring `ComputeVasiPlacement`'s "recompute
+  just this one thing" pattern.
+- `RunwayShape.PrimaryFeatures`/`SecondaryFeatures` are now mutable
+  (settable, `INotifyPropertyChanged`) — `AirportDiagramView`'s bindings
+  (`PrimaryFeatures.ApproachLights` etc.) already react correctly to the
+  parent property changing, no XAML changes needed. `ThresholdMarking`/
+  `BlastPad`/`Overrun` ride along unchanged inside the same immutable
+  `RunwayEndFeatures` record (via a `with` expression) since nothing in the
+  Edit tab can change those yet.
+- `MainViewModel.OnRunwayEditChanged` now also maps
+  `PrimarySystemType`/`SecondarySystemType` (via the new
+  `ApproachLightsIsPrimaryForProperty`) to a new `RefreshApproachLightsShape`,
+  which pushes the recomputed (possibly `null`) `ApproachLightSystemShape`
+  straight onto that end's `Diagram.Runways[...].PrimaryFeatures`/
+  `SecondaryFeatures` — same "recompute just this one shape" approach every
+  other live-diagram-sync fix in this file uses, rather than re-running the
+  whole projection (which would reset zoom/pan/selection).
+
+- **Backwards compatibility:** no persisted field was added, removed, or
+  reinterpreted — purely an in-memory diagram-sync fix.
+- Test coverage: `AirportDiagramProjectorTests.ComputeApproachLightsPlacement_Primary_MatchesWhatProjectProduced`/
+  `ComputeApproachLightsPlacement_Secondary_MatchesWhatProjectProduced`/
+  `ComputeApproachLightsPlacement_NoSystemInstalled_ReturnsNull`;
+  `MainViewModelTests.SettingApproachLightSystemTypeThroughEditViewModel_ShowsUpOnDiagramImmediately`/
+  `ClearingApproachLightSystemTypeThroughEditViewModel_RemovesItFromDiagramImmediately`.
+
+## Bug fix: could only type whole numbers into Edit tab numeric grid columns (2026-09-23)
+
+**User-reported symptom:** editing a VASI/PAPI's glideslope angle (e.g.
+trying to enter `2.9`) in the Runways grid only accepted whole numbers —
+the `.` key appeared to do nothing useful, so only integer values could be
+typed.
+
+**Root cause, found across three iterations (both earlier fix attempts below
+turned out to target the wrong mechanism — kept here rather than deleted,
+since the dead ends are exactly what proved the real cause):**
+
+1. *First theory (wrong):* culture-aware parsing — `MainWindow`'s root
+   `<Window Language="en-US">`, reasoning `FrameworkElement.Language`
+   governs a `Binding`'s implicit string↔double conversion culture. **Live
+   testing: no effect at all.**
+2. *Second theory (wrong):* `Binding`'s actual culture fallback is
+   `CultureInfo.CurrentCulture`, not `Language` — so `App.OnStartup` was
+   made to set `CultureInfo.CurrentCulture`/`CurrentUICulture` to
+   `InvariantCulture` before `MainWindow` is constructed. **Live testing:
+   still no effect** — and tellingly, the user reported *neither* `2.9` nor
+   `2,9` worked, which a pure separator-parsing bug can't explain (one of
+   the two should always have worked). That result is what ruled out
+   culture/parsing as the cause entirely.
+3. *Actual cause:* every affected `DataGridTextColumn` (VASI angle/X/Z/
+   spacing — 16 columns across the 4 Pri/Sec × L/R slots — plus the Parking
+   Spots grid's heading/radius/X/Z, 4 more) set
+   `UpdateSourceTrigger=PropertyChanged`, pushing the `TextBox`'s partial
+   text into the bound `double?` property on *every keystroke*. Typing `2`
+   then `.` (or `,`) produces the intermediate string `"2."`, which
+   `double.Parse` actually accepts (trailing separator, no fractional
+   digits — parses as `2.0`). That successful parse writes `2.0` into the
+   property, whose setter calls `OnPropertyChanged()` — which the `Binding`
+   is subscribed to, and immediately re-pulls the (now-current) value back
+   into the `TextBox`, reformatting `2.0` back to the plain string `"2"`.
+   The separator is erased the instant it's typed, before a fractional
+   digit can ever follow it — for *either* separator, since both parse
+   successfully as a whole-number-with-trailing-dot the same way. Invisible
+   to any automated test: `RunwayEditViewModel`'s `double?` setters work
+   correctly with any value that actually reaches them — the bug is
+   entirely in the live `TextBox`↔property round-trip, upstream of the
+   ViewModel, and needs a real interactive `DataGrid` cell to reproduce.
+
+**Fix:** removed `UpdateSourceTrigger=PropertyChanged` from all 20 affected
+columns, letting them fall back to `DataGridTextColumn`'s own default
+(`LostFocus`) — the source (and the live diagram sync each property's setter
+already triggers: `RefreshVasiShape`/`RefreshParkingShape`/
+`RefreshApproachLightsShape`/`RefreshParkingLeadingTaxiways`) now updates
+once, when the cell is committed, instead of fighting the user on every
+keystroke. The `App.OnStartup` `CultureInfo.InvariantCulture` change from
+attempt 2 was kept (harmless, and still makes typed input consistent with
+every number this app already displays/exports via the same convention —
+see the Airport Data tab's own formatting), even though it wasn't the fix
+for this specific symptom.
+
+- **Backwards compatibility:** no persisted field was added, removed, or
+  reinterpreted — a pure WPF input-parsing fix.
+- **Known UX trade-off:** these 20 fields' diagram sync now happens on
+  losing focus (tab/click away) rather than per keystroke — e.g. dragging a
+  VASI's X value no longer visibly moves the diagram marker mid-typing, only
+  once you leave the cell. Judged the right trade-off (the alternative is
+  the bug above), and arguably better UX regardless (no diagram flicker
+  while a value is still mid-edit).
+- Not covered by automated tests — genuine interactive `DataGrid`
+  cell-editing behavior with no headless way to reproduce the per-keystroke
+  round-trip (the ViewModel-level `double?` setters were never the problem);
+  per CLAUDE.md's testing policy, needs manual verification (typing `2.9`
+  into a VASI angle cell, then tabbing/clicking away, should now show
+  `2.9`) — not yet confirmed against a live run as of this entry; the first
+  two fix attempts above were each live-tested and found not to work, so
+  this one specifically still needs the same confirmation.
+
+## New feature: CALVERT/CALVERT2 informal names, REIL/end/touchdown lights + strobe count, and a Runways editor redesign (2026-09-23)
+
+**User stories, all in the Edit tab's Runways section:**
+1. The approach light system picker should show CALVERT as "Calvert (PALS)"
+   and CALVERT2 as "Calvert2 (PALS CAT II)" — their plain enum names read
+   ambiguously on their own.
+2. Alongside the approach light system, also editable: REIL, end lights,
+   touchdown lights, and strobe count — all part of the SDK's
+   `APPROACHLIGHTS` struct/XML `<ApproachLights/>` element's own attributes.
+3. The Runways grid's ~30 always-visible columns (VASI's 4 slots × 5
+   fields, 2 approach-light ends × 5 fields) made finding a field tedious —
+   asked for a way to reduce this, e.g. a dropdown/expand mechanism
+   organized around the SDK's own `<Runway>` XML sub-element structure (the
+   user linked `runway-xml-properties`, an SDK doc page also mirrored
+   locally under `C:\MSFS 2024 SDK\Documentation`).
+
+**Design decision (confirmed with the user):** per the SDK's own
+`APPROACHLIGHTS` struct, `STROBE_COUNT`/`HAS_END_LIGHTS`/`HAS_REIL_LIGHTS`/
+`HAS_TOUCHDOWN_LIGHTS` are siblings of `SYSTEM`, not nested under it — and a
+real runway can have REIL/touchdown lights with no approach light system at
+all (e.g. many small airports). Asked whether these should be independent of
+the system-type picker or bundled with it (only settable once a system is
+chosen); the user chose **independent**, matching how this app already
+flattens VASI's own struct (Type/Angle/BiasX/BiasZ/Spacing) onto `Runway`
+directly rather than nesting it in a sub-record.
+
+**Implementation:**
+- `EnumOptions.ApproachLightSystemTypeOptions` (a new `Label`/`Value` pair
+  list, replacing the old plain-enum `ApproachLightSystemTypes`) gives
+  CALVERT/CALVERT2 their informal-name suffix while leaving every other
+  system's plain enum name untouched; bound via `SelectedValuePath`/
+  `DisplayMemberPath` rather than `SelectedItem`, so
+  `RunwayEditViewModel.PrimarySystemType`/`SecondarySystemType` stay a plain
+  `ApproachLightSystemType?` — only the picker's DISPLAY changed.
+- `Runway` gained 8 new flat properties: `Primary`/`SecondaryApproachLightsStrobeCount`
+  (`int`) and `Primary`/`SecondaryApproachLightsHasEndLights`/`HasReilLights`/
+  `HasTouchdownLights` (`bool`) — added purely additively (see backwards
+  compatibility below), plain non-nullable with false/0 defaults matching
+  `TaxiPathSegment.LeftEdgeLighted`'s own "always resolved, never ambiguous"
+  convention, since SimConnect reports a real value for these regardless of
+  `SYSTEM`.
+- `SimConnectService`: `FacilityApproachLightsData` now also requests
+  `STROBE_COUNT`/`HAS_END_LIGHTS`/`HAS_REIL_LIGHTS`/`HAS_TOUCHDOWN_LIGHTS`
+  (confirmed field order and names against the local SDK's
+  `simconnect_addtofacilitydefinition` docs), stored unconditionally in
+  `OnFacilityData` — independent of whether `SYSTEM` was 0, unlike
+  `ApproachLightSystem`'s own construction.
+- `RunwayEditViewModel` gained the matching 8 passthrough properties,
+  settable with no `PrimarySystemType`/`SecondarySystemType` chosen at all.
+- `AirportXmlExporter.AddApproachLights` now also writes `reil`/`strobes`/
+  `endLights`/`touchdown` (confirmed exact XML attribute names/types against
+  the local SDK's `runway-xml-properties` docs — matches the user's linked
+  page) and emits the `<ApproachLights>` element whenever ANY of
+  system/strobes/reil/endLights/touchdown has real data, not just when a
+  system is chosen — otherwise a REIL-only runway's data would be silently
+  dropped at export, the same gap already fixed for extraction. `system` is
+  still the only conditionally-omitted attribute (genuinely optional per the
+  SDK docs); reil/strobes/endLights/touchdown are always written once the
+  element exists, matching `centerLineLighted`/`leftEdgeLighted`/
+  `rightEdgeLighted`'s own "always explicit" convention on `<TaxiwayPath>`.
+- **Runways editor redesign** (confirmed with the user via a mockup preview,
+  choosing this over a per-row inline-expand alternative): the wide grid is
+  now compact (Hide from Diagram/Primary/Secondary/Edge Light Intensity
+  only) with `SelectionMode="Single"`; selecting a row opens a details panel
+  below (new `MainViewModel.SelectedRunwayEdit`, plain two-way
+  `DataGrid.SelectedItem` binding — no code-behind handler needed, unlike
+  the Taxi Paths grid's multi-select) showing that ONE runway's Lights/
+  Primary+Secondary Approach Lights/4 VASI slots as `Expander` sections,
+  mirroring the SDK XML's own `<Runway>` sub-element structure. Reset to
+  `null` in `SetAirport` (`RunwayEdits` is rebuilt fresh on every load, so a
+  stale reference would show the wrong runway's details).
+
+- **Backwards compatibility:** the 8 new `Runway` properties are purely
+  additive — a project file saved before they existed deserializes with
+  them defaulting to `false`/`0` (verified explicitly, not just assumed —
+  see test coverage below), and nothing else in the file is touched or
+  reinterpreted.
+- Test coverage: `EnumOptionsTests` (new file — CALVERT/CALVERT2 labels,
+  every other system's label is unchanged, one option per enum value plus
+  the leading null); `AirportDataTreeBuilderTests` (3 existing tests fixed
+  to disambiguate `"PrimaryApproachLights"` from the new sibling-prefixed
+  properties — see `FindExact`'s own doc comment); `AirportProjectStoreTests.SaveThenLoad_RoundTripsAirportDetails`
+  extended, plus new `Load_OlderFileWithoutApproachLightExtraFields_DefaultsThemFalseZero_AndLoadsRestUnchanged`
+  (writes raw pre-upgrade JSON directly, bypassing `Save`, to genuinely
+  simulate an older file); `AirportXmlExporterTests` extended plus new
+  `Build_RunwayWithReilOnly_NoApproachLightSystem_StillEmitsApproachLightsElement`;
+  `RunwayEditViewModelTests.SettingApproachLightExtras_WritesThroughToWrappedRunway_WithNoSystemTypeChosen`/
+  `..._RaisesPropertyChanged`; `MainViewModelTests.SelectedRunwayEdit_DefaultsNull_AndIsSettableToAnyRunwayEdit`/
+  `ReloadingProject_ClearsSelectedRunwayEdit`.
+- **Not covered by automated tests, needs manual verification:** the new
+  Runways editor's actual WPF layout/interaction (Expander
+  expand/collapse, row selection driving the details panel, the "select a
+  runway" placeholder text) — real WPF rendering, same exclusion category as
+  every other view-layer change in this file.
