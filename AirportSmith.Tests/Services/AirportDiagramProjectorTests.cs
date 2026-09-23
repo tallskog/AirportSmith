@@ -485,11 +485,10 @@ public class AirportDiagramProjectorTests
         Assert.False(Assert.Single(diagram.TaxiwaySegments).HasName);
     }
 
-    // Runway-type paths are drawn (unlike Parking, which stays excluded) so
-    // a point only reachable via a runway entrance/exit stub still shows as
-    // visibly connected — see TaxiwaySegmentShape.IsRunwayType's own doc
-    // comment for the real OIBK anomaly (points 0/12 looking orphaned) this
-    // was fixed for.
+    // Runway-type paths are drawn so a point only reachable via a runway
+    // entrance/exit stub still shows as visibly connected — see
+    // TaxiwaySegmentShape.IsRunwayType's own doc comment for the real OIBK
+    // anomaly (points 0/12 looking orphaned) this was fixed for.
     [Fact]
     public void Project_TaxiwaySegment_RunwayType_IsIncludedWithIsRunwayTypeTrue()
     {
@@ -504,11 +503,23 @@ public class AirportDiagramProjectorTests
 
         var diagram = AirportDiagramProjector.Project(airport);
 
-        Assert.True(Assert.Single(diagram.TaxiwaySegments).IsRunwayType);
+        var shape = Assert.Single(diagram.TaxiwaySegments);
+        Assert.True(shape.IsRunwayType);
+        Assert.False(shape.IsParkingType);
     }
 
+    // Parking-type paths (a stand's lead-in stub) are drawn too — see
+    // TaxiwaySegmentShape.IsParkingType's own doc comment for the
+    // user-reported "invisible on diagram" gap this was fixed for.
+    // EndXMeters/EndZMeters here stand in for what
+    // SimConnectService.ResolveTaxiPathPoints actually resolves a Parking
+    // path's End to (the parking spot's own BiasX/BiasZ), which is real
+    // production data, not a placeholder — see
+    // Project_TaxiwayPoints_ParkingTypePathEnd_IsExcluded below for the
+    // still-correct, unrelated exclusion of Parking-path ends from the
+    // synthesized TaxiwayPoints dots.
     [Fact]
-    public void Project_TaxiwaySegment_ParkingType_IsExcluded()
+    public void Project_TaxiwaySegment_ParkingType_IsIncludedWithIsParkingTypeTrue()
     {
         var airport = Airport(a => a.TaxiPaths.Add(new TaxiPathSegment
         {
@@ -521,7 +532,9 @@ public class AirportDiagramProjectorTests
 
         var diagram = AirportDiagramProjector.Project(airport);
 
-        Assert.Empty(diagram.TaxiwaySegments);
+        var shape = Assert.Single(diagram.TaxiwaySegments);
+        Assert.True(shape.IsParkingType);
+        Assert.False(shape.IsRunwayType);
     }
 
     [Fact]
@@ -538,7 +551,9 @@ public class AirportDiagramProjectorTests
 
         var diagram = AirportDiagramProjector.Project(airport);
 
-        Assert.False(Assert.Single(diagram.TaxiwaySegments).IsRunwayType);
+        var shape = Assert.Single(diagram.TaxiwaySegments);
+        Assert.False(shape.IsRunwayType);
+        Assert.False(shape.IsParkingType);
     }
 
     [Fact]
@@ -561,16 +576,17 @@ public class AirportDiagramProjectorTests
     [Fact]
     public void Project_TaxiwaySegments_SourceIndexSkipsExcludedSegments()
     {
-        // A Parking-typed path at index 0 is excluded from TaxiwaySegments
-        // (unlike Runway, which is now included — see
-        // Project_TaxiwaySegment_RunwayType_IsIncludedWithIsRunwayTypeTrue)
+        // A Closed-typed path at index 0 is excluded from TaxiwaySegments
+        // (unlike Runway/Parking, which are both included — see
+        // Project_TaxiwaySegment_RunwayType_IsIncludedWithIsRunwayTypeTrue/
+        // Project_TaxiwaySegment_ParkingType_IsIncludedWithIsParkingTypeTrue)
         // — the surviving Taxi-typed path's SourceIndex must still be 1 (its
         // real position in AirportDetails.TaxiPaths), not 0 (its position in
         // the filtered TaxiwaySegments list) — this is what lets the Edit
         // tab's diagram click map a shape back to the right TaxiPathEditViewModel.
         var airport = Airport(a =>
         {
-            a.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Parking, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+            a.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Closed, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
             a.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
         });
 
@@ -652,6 +668,76 @@ public class AirportDiagramProjectorTests
         Assert.Equal(130, center.Y, Precision);
         Assert.Equal(70, biasX, Precision);
         Assert.Equal(20, biasZ, Precision);
+    }
+
+    // ComputeTaxiwaySegmentPlacement is what lets a Parking-type path's line
+    // track its linked parking spot after an edit (see
+    // MainViewModel.RefreshParkingLeadingTaxiways). Verified against the
+    // diagram's own OriginXMeters/OriginZMeters (the same screen-mapping
+    // formula ToScreenPoint uses) rather than a second Project() call — a
+    // fresh Project of the moved segment would compute its OWN bounds/origin
+    // from different Start/End data, so its screen coordinates wouldn't be
+    // comparable to this recompute, which deliberately keeps the ORIGINAL
+    // diagram's origin fixed (exactly the point: the rest of the diagram —
+    // runways, other taxiways — must not shift just because one spot moved).
+    [Fact]
+    public void ComputeTaxiwaySegmentPlacement_AfterEndMoves_MatchesHandCalculatedCoordinates()
+    {
+        var segment = new TaxiPathSegment
+        {
+            Type = TaxiPathType.Parking,
+            WidthMeters = 10,
+            StartXMeters = 0,
+            StartZMeters = 0,
+            EndXMeters = 100,
+            EndZMeters = 0,
+        };
+        var airport = Airport(a => a.TaxiPaths.Add(segment));
+        var diagram = AirportDiagramProjector.Project(airport);
+        var originalShape = Assert.Single(diagram.TaxiwaySegments);
+
+        // Simulate ParkingSpotEditViewModel.BiasXMeters/BiasZMeters writing
+        // the spot's new position through onto the linked path's End.
+        segment.EndXMeters = 80;
+        segment.EndZMeters = 30;
+
+        var placement = AirportDiagramProjector.ComputeTaxiwaySegmentPlacement(diagram, segment);
+
+        Assert.NotNull(placement);
+        var (end, midPoint, widthCorners) = placement.Value;
+
+        Assert.Equal(80 + diagram.OriginXMeters, end.X, Precision);
+        Assert.Equal(diagram.OriginZMeters - 30, end.Y, Precision);
+        Assert.Equal(40 + diagram.OriginXMeters, midPoint.X, Precision);
+        Assert.Equal(diagram.OriginZMeters - 15, midPoint.Y, Precision);
+
+        // WidthCorners = [start+perp, end+perp, end-perp, start-perp], so
+        // averaging opposite corners must recover Start (unchanged from the
+        // original projection) and the new End — true regardless of the
+        // perpendicular direction/width math, so this doesn't just
+        // re-duplicate the production formula.
+        Assert.Equal(4, widthCorners.Count);
+        Assert.Equal(originalShape.Start.X, (widthCorners[0].X + widthCorners[3].X) / 2, Precision);
+        Assert.Equal(originalShape.Start.Y, (widthCorners[0].Y + widthCorners[3].Y) / 2, Precision);
+        Assert.Equal(end.X, (widthCorners[1].X + widthCorners[2].X) / 2, Precision);
+        Assert.Equal(end.Y, (widthCorners[1].Y + widthCorners[2].Y) / 2, Precision);
+    }
+
+    [Fact]
+    public void ComputeTaxiwaySegmentPlacement_UnresolvedStartOrEnd_ReturnsNull()
+    {
+        var segment = new TaxiPathSegment
+        {
+            Type = TaxiPathType.Parking,
+            WidthMeters = 10,
+            StartXMeters = null,
+            StartZMeters = null,
+            EndXMeters = 100,
+            EndZMeters = 0,
+        };
+        var diagram = AirportDiagramProjector.Project(Airport());
+
+        Assert.Null(AirportDiagramProjector.ComputeTaxiwaySegmentPlacement(diagram, segment));
     }
 
     [Fact]
@@ -747,9 +833,8 @@ public class AirportDiagramProjectorTests
     [Fact]
     public void Project_TaxiwayPoints_ClosedTypePath_StillIncluded_UnlikeTaxiwaySegments()
     {
-        // Unlike TaxiwaySegments (which only draws Taxi/Path/Runway types,
-        // see Project_TaxiwaySegment_ParkingType_IsExcluded above),
-        // TaxiwayPoints is deliberately NOT filtered by path type — see
+        // Unlike TaxiwaySegments (which only draws Taxi/Path/Runway/Parking
+        // types), TaxiwayPoints is deliberately NOT filtered by path type — see
         // AirportDiagramProjector.Project's own comment on why. Closed
         // (rather than Runway) makes the point: it stays excluded from
         // TaxiwaySegments, yet both its Start and End still resolve as real

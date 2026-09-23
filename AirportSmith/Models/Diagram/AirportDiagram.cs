@@ -118,25 +118,57 @@ public class RunwayShape : INotifyPropertyChanged
 // react to all of these.
 public class TaxiwaySegmentShape : INotifyPropertyChanged
 {
+    // Never changes after projection — Start is always a taxi point, and the
+    // Edit tab has no way to move one (TaxiwayPointEditViewModel only exposes
+    // Type/Orientation, not X/Z), so unlike End/MidPoint/WidthCorners below
+    // it doesn't need a live-updatable setter.
     public required Point2D Start { get; init; }
-    public required Point2D End { get; init; }
-    public required IReadOnlyList<Point2D> WidthCorners { get; init; }
-    public required Point2D MidPoint { get; init; }
+
+    // End/MidPoint/WidthCorners are mutable (unlike Start/SourceIndex/
+    // IsRunwayType/IsParkingType) so a Parking-type segment's line can track
+    // its linked parking spot live when the spot moves — see
+    // AirportDiagramProjector.ComputeTaxiwaySegmentPlacement and
+    // MainViewModel.RefreshParkingShape, which calls it. Before this existed,
+    // moving a spot updated its own ParkingSpotShape dot but left this
+    // segment's line stranded at the spot's old position — invisible while
+    // Parking-type paths weren't drawn at all, but a visible desync once they
+    // were (see IsParkingType's own doc comment).
+    private Point2D _end;
+    public required Point2D End { get => _end; set => SetField(ref _end, value); }
+
+    private IReadOnlyList<Point2D> _widthCorners = [];
+    public required IReadOnlyList<Point2D> WidthCorners { get => _widthCorners; set => SetField(ref _widthCorners, value); }
+
+    private Point2D _midPoint;
+    public required Point2D MidPoint { get => _midPoint; set => SetField(ref _midPoint, value); }
+
     public required int SourceIndex { get; init; }
 
     // True for a TaxiPathType.Runway segment — these render with a distinct
     // style (see AirportDiagramView's TaxiwaySegments template) rather than
     // the ordinary named/unnamed blue/gray line, so they read as "this is
     // the taxi path onto/off a runway, not an ordinary taxiway" at a glance.
-    // Included here (unlike Parking-type paths, which stay excluded from
-    // TaxiwaySegments entirely) specifically so a point ONLY reachable via a
-    // Runway-type path — e.g. a runway entrance/exit stub — still shows as
-    // visibly connected instead of looking like an orphaned dot next to the
+    // Included here specifically so a point ONLY reachable via a Runway-type
+    // path — e.g. a runway entrance/exit stub — still shows as visibly
+    // connected instead of looking like an orphaned dot next to the
     // TaxiwayPoints red marker, which is exactly how a real OIBK data
     // anomaly (points 0 and 12 only linked via Runway-type paths) went
     // unnoticed in the diagram despite the Taxi Paths grid already showing
     // the connecting row.
     public required bool IsRunwayType { get; init; }
+
+    // True for a TaxiPathType.Parking segment — the short stub connecting a
+    // taxiway point to a parking stand. These were entirely excluded from
+    // TaxiwaySegments until a user reported the resulting gap: the parking
+    // spot's own orange dot (ParkingSpotShape) rendered fine, but the line
+    // leading into it didn't, even though its End resolves to a real point
+    // (SimConnectService.ResolveTaxiPathPoints sets it to the parking spot's
+    // own BiasX/BiasZ — see AirportDiagramProjector's inclusion comment for
+    // the full history). Styled distinctly (see AirportDiagramView's
+    // TaxiwaySegments template) rather than the ordinary named/unnamed
+    // blue/gray line, using a color that matches the parking spot dots so it
+    // reads as "this is a stand's own lead-in," not an ordinary taxiway.
+    public required bool IsParkingType { get; init; }
 
     private bool _hasName;
     public required bool HasName

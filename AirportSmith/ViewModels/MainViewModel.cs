@@ -591,8 +591,14 @@ public class MainViewModel : ViewModelBase
         var affectsDiagram = e.PropertyName is nameof(ParkingSpotEditViewModel.Number) or nameof(ParkingSpotEditViewModel.HeadingDeg)
             or nameof(ParkingSpotEditViewModel.RadiusMeters) or nameof(ParkingSpotEditViewModel.BiasXMeters)
             or nameof(ParkingSpotEditViewModel.BiasZMeters);
-        if (affectsDiagram && sender is ParkingSpotEditViewModel edit)
-            RefreshParkingShape(edit);
+        if (!affectsDiagram || sender is not ParkingSpotEditViewModel edit) return;
+
+        RefreshParkingShape(edit);
+
+        // Only a Bias X/Z change moves any linked Parking-type path's line —
+        // Number/Heading/Radius only affect the spot's own dot/label/tip.
+        if (e.PropertyName is nameof(ParkingSpotEditViewModel.BiasXMeters) or nameof(ParkingSpotEditViewModel.BiasZMeters))
+            RefreshParkingLeadingTaxiways(edit);
     }
 
     // Pushes recomputed geometry straight onto the one ParkingSpotShape this
@@ -611,6 +617,38 @@ public class MainViewModel : ViewModelBase
         shape.HeadingTip = tip;
         shape.RadiusMeters = edit.RadiusMeters;
         shape.Label = edit.Number.ToString();
+    }
+
+    // Moves every Parking-type taxi path's line that leads into this spot,
+    // after its Bias X/Z changed — otherwise the spot's own dot (above) moves
+    // but its lead-in stub stays stranded at the old position, a visible
+    // desync now that Parking-type paths are drawn at all (see
+    // TaxiwaySegmentShape.IsParkingType's own doc comment). edit.LinkedParkingPaths
+    // is the same TaxiPathSegment list ParkingSpotEditViewModel's own
+    // BiasXMeters/BiasZMeters setters already wrote EndXMeters/EndZMeters
+    // through to, so their coordinates are already current here — this just
+    // needs to find each linked path's TaxiwaySegmentShape (by matching
+    // SourceIndex, since Airport.TaxiPaths.IndexOf finds the source list
+    // position by reference) and push the recomputed screen geometry onto it.
+    private void RefreshParkingLeadingTaxiways(ParkingSpotEditViewModel edit)
+    {
+        if (Diagram is null || Airport is null) return;
+
+        foreach (var path in edit.LinkedParkingPaths)
+        {
+            var sourceIndex = Airport.TaxiPaths.IndexOf(path);
+            if (sourceIndex < 0) continue;
+
+            var shape = Diagram.TaxiwaySegments.FirstOrDefault(s => s.SourceIndex == sourceIndex);
+            if (shape is null) continue;
+
+            var placement = AirportDiagramProjector.ComputeTaxiwaySegmentPlacement(Diagram, path);
+            if (placement is not { } p) continue;
+
+            shape.End = p.End;
+            shape.MidPoint = p.MidPoint;
+            shape.WidthCorners = p.WidthCorners;
+        }
     }
 
     private int IndexOfParkingSpotEdit(ParkingSpotEditViewModel edit)

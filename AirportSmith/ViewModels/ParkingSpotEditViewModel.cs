@@ -29,6 +29,15 @@ public class ParkingSpotEditViewModel : ViewModelBase
     // orphan) those paths.
     public int ItemIndex => _spot.ItemIndex;
 
+    // Exposed so MainViewModel.RefreshParkingLeadingTaxiways can, after a
+    // Bias X/Z edit, find each linked path's TaxiwaySegmentShape (by
+    // reference, via Airport.TaxiPaths.IndexOf) and push the recomputed
+    // screen position onto it — same list this class already writes
+    // EndXMeters/EndZMeters through to on every Bias change (see
+    // BiasXMeters/BiasZMeters below), so it's already exactly "every path
+    // whose diagram line needs to move too."
+    public IReadOnlyList<TaxiPathSegment> LinkedParkingPaths => _parkingPaths;
+
     public int Number
     {
         get => _spot.Number;

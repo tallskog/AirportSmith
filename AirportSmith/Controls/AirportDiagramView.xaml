@@ -260,6 +260,15 @@
                                                 <Setter Property="StrokeDashArray" Value="{x:Null}"/>
                                                 <Setter Property="StrokeThickness" Value="5"/>
                                             </DataTrigger>
+                                            <!-- DarkOrange to match the ParkingSpots dots below (IsParkingType —
+                                                 see TaxiwaySegmentShape's own doc comment) so a stand's lead-in
+                                                 stub reads as "belongs to that parking spot," not an ordinary
+                                                 taxiway. -->
+                                            <DataTrigger Binding="{Binding IsParkingType}" Value="True">
+                                                <Setter Property="Stroke" Value="DarkOrange"/>
+                                                <Setter Property="StrokeDashArray" Value="{x:Null}"/>
+                                                <Setter Property="StrokeThickness" Value="3"/>
+                                            </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </Line.Style>

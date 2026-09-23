@@ -405,11 +405,18 @@ public static class AirportDiagramProjector
             // via a runway entrance/exit stub still renders as visibly
             // connected — see TaxiwaySegmentShape.IsRunwayType's own doc
             // comment for why this matters (a real OIBK anomaly this was
-            // fixed for). Parking stays excluded: its End doesn't reference
-            // a taxi point at all (see BuildTaxiwayPoints below), so there's
-            // no sensible line endpoint to draw for it, and its connection
-            // to the network is already shown via the ParkingSpot marker.
-            if (type is not (TaxiPathType.Taxi or TaxiPathType.Path or TaxiPathType.Runway))
+            // fixed for). Parking is ALSO included (as of the fix for a
+            // user-reported "parking stub invisible on diagram" gap): its
+            // End references a TaxiwayParking item rather than a TAXI_POINT
+            // (see BuildTaxiwayPoints below, which is why it still doesn't
+            // get a synthesized TaxiwayPoint dot), but
+            // SimConnectService.ResolveTaxiPathPoints already resolves that
+            // End to the parking spot's own BiasX/BiasZ, so a real line
+            // endpoint IS available — the earlier "no sensible endpoint"
+            // reasoning for excluding it no longer held once that resolution
+            // was added. See TaxiwaySegmentShape.IsParkingType's own doc
+            // comment for the distinct styling this gets.
+            if (type is not (TaxiPathType.Taxi or TaxiPathType.Path or TaxiPathType.Runway or TaxiPathType.Parking))
                 continue;
             if (segment.StartXMeters is not { } sx || segment.StartZMeters is not { } sz ||
                 segment.EndXMeters is not { } ex || segment.EndZMeters is not { } ez)
@@ -418,25 +425,7 @@ public static class AirportDiagramProjector
             var start = new LocalPoint(sx, sz);
             var end = new LocalPoint(ex, ez);
             var midPoint = new LocalPoint((sx + ex) / 2, (sz + ez) / 2);
-
-            // Pavement footprint band from TaxiPathSegment.WidthMeters — the
-            // centerline (Start/End) stays as-is for the existing
-            // named/unnamed line styling. Perpendicular is the segment
-            // direction rotated 90°; a zero-length segment (degenerate
-            // Start == End) falls back to an arbitrary perpendicular since
-            // there's no direction to rotate — it'll render as a point either way.
-            var dx = ex - sx;
-            var dz = ez - sz;
-            var length = Math.Sqrt(dx * dx + dz * dz);
-            var (perpX, perpZ) = length > 0 ? (-dz / length, dx / length) : (1.0, 0.0);
-            var halfWidth = segment.WidthMeters / 2;
-            var widthCorners = new[]
-            {
-                new LocalPoint(start.X + perpX * halfWidth, start.Z + perpZ * halfWidth),
-                new LocalPoint(end.X + perpX * halfWidth, end.Z + perpZ * halfWidth),
-                new LocalPoint(end.X - perpX * halfWidth, end.Z - perpZ * halfWidth),
-                new LocalPoint(start.X - perpX * halfWidth, start.Z - perpZ * halfWidth),
-            };
+            var widthCorners = BuildTaxiwayWidthCorners(start, end, segment.WidthMeters);
 
             taxiways.Add((segment, sourceIndex, start, end, widthCorners, midPoint));
         }
@@ -535,6 +524,7 @@ public static class AirportDiagramProjector
                     MidPoint = ToScreen(t.MidPoint),
                     SourceIndex = t.SourceIndex,
                     IsRunwayType = t.Segment.Type == TaxiPathType.Runway,
+                    IsParkingType = t.Segment.Type == TaxiPathType.Parking,
                 };
             }).ToList(),
             ParkingSpots = parkingSpots.Select((p, i) => new ParkingSpotShape
@@ -649,6 +639,63 @@ public static class AirportDiagramProjector
     {
         var local = ToLocalPoint(diagram, screenPoint);
         return (local.X, local.Z);
+    }
+
+    // Pavement footprint band from TaxiPathSegment.WidthMeters — the
+    // centerline (Start/End) stays as-is for the existing named/unnamed line
+    // styling. Perpendicular is the segment direction rotated 90°; a
+    // zero-length segment (degenerate Start == End) falls back to an
+    // arbitrary perpendicular since there's no direction to rotate — it'll
+    // render as a point either way. Shared by Project's taxiway loop and
+    // ComputeTaxiwaySegmentPlacement (recomputing just one segment's corners
+    // after its End moved, e.g. a Parking-type path whose linked parking spot
+    // was edited) so both agree on the same rectangle math.
+    private static LocalPoint[] BuildTaxiwayWidthCorners(LocalPoint start, LocalPoint end, double widthMeters)
+    {
+        var dx = end.X - start.X;
+        var dz = end.Z - start.Z;
+        var length = Math.Sqrt(dx * dx + dz * dz);
+        var (perpX, perpZ) = length > 0 ? (-dz / length, dx / length) : (1.0, 0.0);
+        var halfWidth = widthMeters / 2;
+        return
+        [
+            new LocalPoint(start.X + perpX * halfWidth, start.Z + perpZ * halfWidth),
+            new LocalPoint(end.X + perpX * halfWidth, end.Z + perpZ * halfWidth),
+            new LocalPoint(end.X - perpX * halfWidth, end.Z - perpZ * halfWidth),
+            new LocalPoint(start.X - perpX * halfWidth, start.Z - perpZ * halfWidth),
+        ];
+    }
+
+    // Screen-space End/MidPoint/WidthCorners for one taxi path segment's
+    // CURRENT Start/End/WidthMeters — called by MainViewModel after a Parking
+    // spot's Bias X/Z changes, since ParkingSpotEditViewModel already writes
+    // the new position straight through onto every linked Parking-type
+    // path's EndXMeters/EndZMeters (see its own doc comment), but the
+    // diagram's TaxiwaySegmentShape for that path was only ever computed once
+    // at load time. Mirrors ComputeParkingPlacement's "recompute just this
+    // one shape" approach rather than re-running the whole projection (which
+    // would reset zoom/pan/selection). Start is deliberately left out here —
+    // it's a taxi point, which the Edit tab has no way to move, so
+    // TaxiwaySegmentShape.Start never needs to change after projection.
+    // Returns null if the segment's Start/End aren't both resolved (same
+    // "unresolved means skip" convention Project's own taxiway loop uses) —
+    // the caller should leave the existing shape alone in that case rather
+    // than move it to a nonsensical position.
+    public static (Point2D End, Point2D MidPoint, IReadOnlyList<Point2D> WidthCorners)? ComputeTaxiwaySegmentPlacement(AirportDiagram diagram, TaxiPathSegment segment)
+    {
+        if (segment.StartXMeters is not { } sx || segment.StartZMeters is not { } sz ||
+            segment.EndXMeters is not { } ex || segment.EndZMeters is not { } ez)
+            return null;
+
+        var start = new LocalPoint(sx, sz);
+        var end = new LocalPoint(ex, ez);
+        var midPoint = new LocalPoint((sx + ex) / 2, (sz + ez) / 2);
+        var widthCorners = BuildTaxiwayWidthCorners(start, end, segment.WidthMeters);
+
+        return (
+            ToScreenPoint(diagram, end),
+            ToScreenPoint(diagram, midPoint),
+            widthCorners.Select(p => ToScreenPoint(diagram, p)).ToList());
     }
 
     private static Point2D ToScreenPoint(AirportDiagram diagram, LocalPoint p) =>

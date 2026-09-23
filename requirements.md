@@ -2303,3 +2303,91 @@ research behind it.
      originally-reported symptom; the concurrency cap above should still make
      the fill-in visibly progressive (tiles appearing a couple at a time)
      rather than all at once.
+
+## Bug fix: Parking-type taxi paths invisible on diagram (2026-09-23)
+
+**User-reported symptom:** taxiway paths of `Type == Parking` (the short stub
+connecting a taxiway point to a parking stand) never rendered as a line on
+the diagram, even though the parking spot itself (`ParkingSpotShape`, the
+orange dot) rendered fine.
+
+**Root cause:** `AirportDiagramProjector.Project`'s `TaxiwaySegments` filter
+only ever included `Taxi`/`Path`/`Runway`-typed paths. The exclusion of
+`Parking` was deliberate when `Runway` was added (see the OIBK anomaly
+writeup above), reasoned as "its `End` doesn't reference a taxi point at all
+... so there's no sensible line endpoint to draw for it." That reasoning was
+stale: `SimConnectService.ResolveTaxiPathPoints` already resolves a `Parking`
+path's `EndXMeters`/`EndZMeters` to its `TaxiParkingSpot`'s own
+`BiasXMeters`/`BiasZMeters` (confirmed in code, not just theory), so a real
+line endpoint has been available all along — it just wasn't being drawn.
+
+**Fix:** `Parking` is now included in the `TaxiwaySegments` filter alongside
+`Taxi`/`Path`/`Runway`. `TaxiwaySegmentShape` gained `IsParkingType` (same
+pattern as the existing `IsRunwayType`), and `AirportDiagramView` renders a
+`Parking`-typed segment as a solid `DarkOrange` line (matching the parking
+spot dots' own color) instead of the ordinary named/unnamed blue/gray
+styling, so it reads as "this stand's own lead-in," not an ordinary taxiway.
+
+Unaffected by this fix (still correct, unrelated code path): a `Parking`
+path's `End` still does NOT get a synthesized `TaxiwayPoint` red-dot marker
+(`AirportDiagramProjector.Project`'s `taxiwayPointsByIndex` loop and
+`AirportXmlExporter.BuildTaxiwayPoints` both still special-case
+`Type == Parking` for that, since that index is a `TaxiwayParking` reference,
+not a `TAXI_POINT` one) — only the line itself was the gap.
+
+- Test coverage: `AirportDiagramProjectorTests.Project_TaxiwaySegment_ParkingType_IsIncludedWithIsParkingTypeTrue`
+  (replaces the old `..._ParkingType_IsExcluded`);
+  `Project_TaxiwaySegments_SourceIndexSkipsExcludedSegments` now uses a
+  `Closed`-typed path (a type still genuinely excluded) to exercise the
+  index-skip behavior, since `Parking` is no longer excluded.
+- No persisted-data/AppData impact — this only changes in-memory diagram
+  projection and WPF styling, not any serialized project/settings format.
+
+### Follow-up: moving a parking spot didn't move its linked taxiway line (2026-09-23)
+
+**User-reported symptom:** once Parking-type paths were drawn (the fix
+above), moving a parking spot's position (grid Bias X/Z edit, or diagram
+click-to-place) moved the spot's own orange dot but left its lead-in stub
+line stranded at the old position — a newly-visible desync that didn't exist
+while the line wasn't drawn at all.
+
+**Root cause:** `ParkingSpotEditViewModel.BiasXMeters`/`BiasZMeters` already
+wrote the new position through onto every linked `Type == Parking` path's
+`EndXMeters`/`EndZMeters` (this write-through predates the fix above — it
+was already needed for the Airport Data tab / a hypothetical future
+consumer). But `TaxiwaySegmentShape.End`/`MidPoint`/`WidthCorners` were
+`init`-only, computed once by `AirportDiagramProjector.Project` at load time
+and never refreshed — unlike `ParkingSpotShape.Center`/`HeadingTip`, which
+`MainViewModel.RefreshParkingShape` already recomputes live on every edit.
+
+**Fix:**
+- `TaxiwaySegmentShape.End`/`MidPoint`/`WidthCorners` are now mutable
+  (settable, `INotifyPropertyChanged`), same pattern as `ParkingSpotShape`'s
+  own live-updatable fields. `Start` stays `init`-only — it's always a taxi
+  point, and the Edit tab has no way to move one.
+- New `AirportDiagramProjector.ComputeTaxiwaySegmentPlacement(diagram, segment)`
+  recomputes just one segment's screen-space `End`/`MidPoint`/`WidthCorners`
+  from its current `StartXMeters`/`StartZMeters`/`EndXMeters`/`EndZMeters`/
+  `WidthMeters`, reusing the diagram's existing origin (so the rest of the
+  diagram doesn't shift) — same "recompute just this shape" approach
+  `ComputeParkingPlacement` already used for the spot's own dot. Returns
+  `null` if Start/End aren't both resolved. The rectangle-corner math itself
+  was factored out of `Project`'s taxiway loop into a shared
+  `BuildTaxiwayWidthCorners` helper so both stay in agreement.
+- `ParkingSpotEditViewModel` now exposes `LinkedParkingPaths` (the same list
+  its Bias setters already write through to). `MainViewModel` gained
+  `RefreshParkingLeadingTaxiways`, called from `OnParkingSpotEditChanged`
+  only on a Bias X/Z change (Number/Heading/Radius don't affect a path's
+  line): for each linked path, finds its `TaxiwaySegmentShape` by
+  `SourceIndex` (via `Airport.TaxiPaths.IndexOf`, matching by reference) and
+  pushes the recomputed geometry onto it. Covers both the Parking Spots
+  grid's Bias fields and diagram click-to-place (`PlaceParking`), since both
+  go through the same `ParkingSpotEditViewModel.BiasXMeters`/`BiasZMeters`
+  setters.
+
+- Test coverage: `AirportDiagramProjectorTests.ComputeTaxiwaySegmentPlacement_AfterEndMoves_MatchesHandCalculatedCoordinates`/
+  `ComputeTaxiwaySegmentPlacement_UnresolvedStartOrEnd_ReturnsNull`;
+  `MainViewModelTests.EditingParkingSpotPosition_AlsoMovesItsLinkedParkingTaxiwayShape`
+  (also confirms an unrelated `Taxi`-type path sharing the same `EndIndex`
+  by coincidence is left untouched — only `Parking`-type paths are linked).
+- No persisted-data/AppData impact — same as the fix above.

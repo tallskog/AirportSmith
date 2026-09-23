@@ -1439,6 +1439,65 @@ public class MainViewModelTests
         Assert.Equal(25, vm.Airport.ParkingSpots[1].BiasZMeters);
     }
 
+    // The user-reported follow-up to the "Parking paths invisible on
+    // diagram" fix: since a Parking-type path's line IS now drawn (matching
+    // its linked spot's position at load time), moving that spot afterward
+    // must move the line too, or the two visibly desync. Mirrors
+    // EditingParkingSpotPosition_MovesTheMatchingDiagramShapeOnly above, plus
+    // the matching taxiway-shape assertions.
+    [Fact]
+    public void EditingParkingSpotPosition_AlsoMovesItsLinkedParkingTaxiwayShape()
+    {
+        var airport = BuildAirportWithThreeParkingSpots();
+        // Linked to spot[1] (ItemIndex=1); an unrelated Taxi-type path with a
+        // coincidentally matching EndIndex must NOT move.
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Parking,
+            EndIndex = 1,
+            WidthMeters = 10,
+            StartXMeters = 90,
+            StartZMeters = -20,
+            EndXMeters = 100,
+            EndZMeters = 0,
+        });
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi,
+            EndIndex = 1,
+            WidthMeters = 10,
+            StartXMeters = 90,
+            StartZMeters = -20,
+            EndXMeters = 100,
+            EndZMeters = 0,
+        });
+        var vm = CreateViewModelWithAirport(airport);
+        var diagram = vm.Diagram!;
+        var parkingShape = Assert.Single(diagram.TaxiwaySegments, s => s.IsParkingType);
+        var taxiShape = Assert.Single(diagram.TaxiwaySegments, s => !s.IsParkingType);
+        var taxiShapeEndBefore = taxiShape.End;
+        var taxiShapeMidPointBefore = taxiShape.MidPoint;
+        var parkingShapeStartBefore = parkingShape.Start;
+
+        vm.ParkingSpotEdits[1].BiasXMeters = 60;
+        vm.ParkingSpotEdits[1].BiasZMeters = 25;
+
+        Assert.Equal(60 + diagram.OriginXMeters, parkingShape.End.X, 3);
+        Assert.Equal(diagram.OriginZMeters - 25, parkingShape.End.Y, 3);
+        Assert.Equal(parkingShapeStartBefore, parkingShape.Start); // Start (a taxi point) never moves
+        Assert.Equal((90 + 60) / 2.0 + diagram.OriginXMeters, parkingShape.MidPoint.X, 3);
+        Assert.Equal(diagram.OriginZMeters - (-20 + 25) / 2.0, parkingShape.MidPoint.Y, 3);
+        // The underlying model's End tracked the edit too (ParkingSpotEditViewModel's own write-through).
+        Assert.Equal(60, airport.TaxiPaths[0].EndXMeters);
+        Assert.Equal(25, airport.TaxiPaths[0].EndZMeters);
+
+        // The unrelated Taxi-type path with the same EndIndex is untouched —
+        // only Parking-type paths are linked to a parking spot.
+        Assert.Equal(taxiShapeEndBefore, taxiShape.End);
+        Assert.Equal(taxiShapeMidPointBefore, taxiShape.MidPoint);
+        Assert.Equal(100, airport.TaxiPaths[1].EndXMeters);
+    }
+
     [Fact]
     public void EditingParkingSpotHeadingRadiusAndNumber_UpdatesDiagramShape()
     {
