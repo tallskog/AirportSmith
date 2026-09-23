@@ -410,6 +410,17 @@ public class MainViewModel : ViewModelBase
     public RelayCommand<ParkingSpotEditViewModel> ArmParkingPlacementCommand { get; }
     public RelayCommand<Point2D> PlaceParkingCommand { get; }
     public RelayCommand DeleteSelectedParkingSpotsCommand { get; }
+    public RelayCommand DeleteSelectedTaxiwaySegmentsCommand { get; }
+    public RelayCommand DeleteSelectedTaxiwayPointsCommand { get; }
+
+    // The single command MainWindow's Delete KeyBinding actually targets —
+    // dispatches to whichever of the three deletions above applies (see
+    // DeleteSelected's own doc comment for the priority order), since WPF
+    // doesn't cleanly support multiple InputBindings competing for the same
+    // key gesture. The three commands above stay separately exposed (and
+    // independently testable/CanExecute-able) for that dispatch and for any
+    // future dedicated UI (e.g. a button) to bind to directly.
+    public RelayCommand DeleteSelectedCommand { get; }
 
     public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null)
     {
@@ -446,6 +457,12 @@ public class MainViewModel : ViewModelBase
         ArmParkingPlacementCommand = new RelayCommand<ParkingSpotEditViewModel>(ArmParkingPlacement, edit => edit != null);
         PlaceParkingCommand = new RelayCommand<Point2D>(PlaceParking, _ => _armedParkingPlacement != null);
         DeleteSelectedParkingSpotsCommand = new RelayCommand(DeleteSelectedParkingSpots, () => Diagram != null && Diagram.ParkingSpots.Any(p => p.IsSelected));
+        DeleteSelectedTaxiwaySegmentsCommand = new RelayCommand(DeleteSelectedTaxiwaySegments, () => GetEligibleTaxiwaySegmentDeletions().Count > 0);
+        DeleteSelectedTaxiwayPointsCommand = new RelayCommand(DeleteSelectedTaxiwayPoints, () => GetEligibleTaxiwayPointDeletions().Count > 0);
+        DeleteSelectedCommand = new RelayCommand(DeleteSelected, () =>
+            DeleteSelectedParkingSpotsCommand.CanExecute(null) ||
+            DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null) ||
+            DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
         // A single long-lived object (unlike TaxiwayBatchEdit, which is
         // reset per selection, not per subscription) — subscribed once here
         // rather than per-SetAirport, so a filter typed before an airport is
@@ -774,6 +791,199 @@ public class MainViewModel : ViewModelBase
         // side effect rather than hand-patching every derived collection
         // surgically for this first pass.
         SetAirport(Airport);
+    }
+
+    // Dispatches the Delete key to whichever selection is actually active,
+    // in priority order: a parking spot selection wins (the oldest, most
+    // established of the three deletions), then a taxiway path selection,
+    // then a taxiway point selection. The three selections are independent
+    // (see ToggleTaxiwaySelection/ToggleTaxiwayPointSelection/
+    // ToggleParkingSpotSelection's own doc comments — selecting one doesn't
+    // clear the others), so more than one COULD be non-empty at once; this
+    // order just needs to be deterministic, and parking spots already had
+    // the Delete key before the other two existed.
+    private void DeleteSelected()
+    {
+        if (DeleteSelectedParkingSpotsCommand.CanExecute(null)) DeleteSelectedParkingSpots();
+        else if (DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null)) DeleteSelectedTaxiwaySegments();
+        else if (DeleteSelectedTaxiwayPointsCommand.CanExecute(null)) DeleteSelectedTaxiwayPoints();
+    }
+
+    // Maps a taxiway point's sim TAXI_POINT index to every taxi path
+    // touching it, considering only paths present in pathIndexes (all of
+    // Airport.TaxiPaths by default — a caller can narrow this to model a
+    // "what if these paths were already gone" graph, though nothing does
+    // that yet). A path's Start always counts; its End only counts when
+    // Type != Parking, since a Parking-type path's End references a
+    // TaxiwayParking item, not a real taxi point — the same convention
+    // AirportDiagramProjector.Project's own point-synthesis loop and
+    // AirportXmlExporter.BuildTaxiwayPoints both already use. This IS the
+    // point's "degree" (connections[pointIndex].Count) the deletion rules
+    // below are built on.
+    private Dictionary<int, List<int>> BuildTaxiPointConnections(IEnumerable<int>? pathIndexes = null)
+    {
+        var connections = new Dictionary<int, List<int>>();
+        if (Airport is null) return connections;
+
+        void Add(int pointIndex, int pathSourceIndex)
+        {
+            if (!connections.TryGetValue(pointIndex, out var list))
+                connections[pointIndex] = list = [];
+            list.Add(pathSourceIndex);
+        }
+
+        foreach (var i in pathIndexes ?? Enumerable.Range(0, Airport.TaxiPaths.Count))
+        {
+            var path = Airport.TaxiPaths[i];
+            Add(path.StartIndex, i);
+            if (path.Type != TaxiPathType.Parking)
+                Add(path.EndIndex, i);
+        }
+
+        return connections;
+    }
+
+    // A taxi path is Taxi/Path (ordinary) type — Runway and Parking are
+    // structural connections excluded from this cleanup gesture entirely:
+    // Runway-type paths are the sim's own runway entrance/exit stubs, and
+    // Parking-type paths already have their own dedicated removal path (via
+    // DeleteSelectedParkingSpots' cascade) that keeps them in step with
+    // TaxiParkingSpot — deleting one here instead would leave a live parking
+    // spot with no taxi connection.
+    private static bool IsOrdinaryTaxiwayType(TaxiPathType type) => type is TaxiPathType.Taxi or TaxiPathType.Path;
+
+    // Every currently-selected taxiway path that's actually eligible for
+    // this deletion gesture: ordinary type (see IsOrdinaryTaxiwayType) AND
+    // "hanging" — at least one of its Start/End points has degree 1, i.e.
+    // this path is the ONLY thing connecting that point to the network, per
+    // the user-specified rule ("the deleted taxipath has a taxipoint having
+    // only one path connected to it"). A path connecting two points that
+    // each have other connections (an ordinary thru-segment, not a dead end)
+    // is deliberately left out — this gesture is for cleanup, not for
+    // arbitrarily cutting the network apart. Evaluated against the CURRENT,
+    // unmodified graph (not iteratively across the selection), so a whole
+    // dead-end chain is removed by repeating the gesture one segment at a
+    // time, same as a real hanging path would be found and pruned by hand.
+    private List<int> GetEligibleTaxiwaySegmentDeletions()
+    {
+        if (Airport is null || Diagram is null) return [];
+
+        var connections = BuildTaxiPointConnections();
+        return Diagram.TaxiwaySegments
+            .Where(s => s.IsSelected)
+            .Select(s => s.SourceIndex)
+            .Where(i =>
+            {
+                var path = Airport.TaxiPaths[i];
+                if (!IsOrdinaryTaxiwayType(path.Type)) return false;
+                var startDegree = connections.GetValueOrDefault(path.StartIndex)?.Count ?? 0;
+                var endDegree = connections.GetValueOrDefault(path.EndIndex)?.Count ?? 0;
+                return startDegree == 1 || endDegree == 1;
+            })
+            .ToList();
+    }
+
+    // Every currently-selected taxiway point that's actually eligible: it
+    // has degree 1 (per the user-specified rule, "connected only to one taxi
+    // path") AND that one path is an ordinary type (see
+    // IsOrdinaryTaxiwayType) — a point whose sole connection is a Runway or
+    // Parking path is excluded, same "not leading to parking or runway"
+    // scoping GetEligibleTaxiwaySegmentDeletions uses. Returns the set of
+    // PATH source indices to remove (deduped — two selected points can be
+    // the two ends of the very same isolated one-path stub), since a
+    // taxiway point has no row of its own to delete (see
+    // DeleteSelectedTaxiwayPoints' own doc comment): removing its one
+    // connecting path is the whole operation.
+    private HashSet<int> GetEligibleTaxiwayPointDeletions()
+    {
+        var result = new HashSet<int>();
+        if (Airport is null || Diagram is null) return result;
+
+        var connections = BuildTaxiPointConnections();
+        foreach (var point in Diagram.TaxiwayPoints.Where(p => p.IsSelected))
+        {
+            if (connections.GetValueOrDefault(point.Index) is not { Count: 1 } paths) continue;
+            var pathIndex = paths[0];
+            if (IsOrdinaryTaxiwayType(Airport.TaxiPaths[pathIndex].Type))
+                result.Add(pathIndex);
+        }
+
+        return result;
+    }
+
+    // Deletes every currently-selected taxiway path that GetEligibleTaxiway
+    // SegmentDeletions found eligible (ineligible selected paths — not a
+    // dead end, or a Runway/Parking connection — are silently left alone;
+    // the confirmation message says so whenever that happens, rather than
+    // claiming a count that wouldn't match what's actually removed).
+    // Removing the path row is the WHOLE operation: a taxiway point isn't
+    // stored separately anywhere (Diagram.TaxiwayPoints/TaxiwayPointEdits are
+    // both synthesized fresh from Airport.TaxiPaths' distinct Start/End
+    // indices — see BuildTaxiPointConnections' own doc comment and
+    // AirportDiagramProjector.Project's matching synthesis), so once no path
+    // references a point's index anymore, SetAirport's rebuild below simply
+    // stops including it — automatically satisfying "both the taxipath and
+    // taxipoint must be removed at the same time" without any separate point
+    // bookkeeping to keep in sync.
+    private void DeleteSelectedTaxiwaySegments()
+    {
+        if (Airport is null || Diagram is null) return;
+
+        var eligible = GetEligibleTaxiwaySegmentDeletions();
+        if (eligible.Count == 0) return;
+
+        var selectedCount = Diagram.TaxiwaySegments.Count(s => s.IsSelected);
+        var message = BuildDeletionConfirmationMessage(
+            eligible.Count, selectedCount,
+            singular: "Delete 1 taxiway path? Its dead-end taxi point will be removed too.",
+            plural: $"Delete {eligible.Count} taxiway paths? Their dead-end taxi points will be removed too.",
+            partialSuffix: " (Only dead-end paths that don't lead to a runway or parking spot can be deleted this way — the rest of your selection is left as-is.)");
+        if (_confirmationService != null && !_confirmationService.Confirm(message)) return;
+
+        // Descending, so removing one index doesn't shift the meaning of any
+        // index still to be removed.
+        foreach (var index in eligible.OrderByDescending(i => i))
+            Airport.TaxiPaths.RemoveAt(index);
+
+        SetAirport(Airport);
+    }
+
+    // Deletes every currently-selected taxiway point's single connecting
+    // path (see GetEligibleTaxiwayPointDeletions) — that IS deleting the
+    // point, since it has no row of its own (see DeleteSelectedTaxiway
+    // Segments' own doc comment on why removing the path is the whole
+    // operation).
+    private void DeleteSelectedTaxiwayPoints()
+    {
+        if (Airport is null || Diagram is null) return;
+
+        var eligiblePaths = GetEligibleTaxiwayPointDeletions();
+        if (eligiblePaths.Count == 0) return;
+
+        var selectedCount = Diagram.TaxiwayPoints.Count(p => p.IsSelected);
+        var message = BuildDeletionConfirmationMessage(
+            eligiblePaths.Count, selectedCount,
+            singular: "Delete 1 taxiway point? Its connecting taxi path will be removed too.",
+            plural: $"Delete {eligiblePaths.Count} taxiway points? Their connecting taxi paths will be removed too.",
+            partialSuffix: " (Only points connected to exactly one taxi path, not a runway or parking spot, can be deleted this way — the rest of your selection is left as-is.)");
+        if (_confirmationService != null && !_confirmationService.Confirm(message)) return;
+
+        foreach (var index in eligiblePaths.OrderByDescending(i => i))
+            Airport.TaxiPaths.RemoveAt(index);
+
+        SetAirport(Airport);
+    }
+
+    // Shared wording for DeleteSelectedTaxiwaySegments/DeleteSelectedTaxiway
+    // Points' confirmation prompts: eligibleCount is what will actually be
+    // removed, selectedCount is what the user actually selected — they can
+    // differ (some selected items don't qualify), and silently deleting
+    // fewer items than the user thinks they selected would be a worse
+    // surprise than a slightly longer message explaining why.
+    private static string BuildDeletionConfirmationMessage(int eligibleCount, int selectedCount, string singular, string plural, string partialSuffix)
+    {
+        var message = eligibleCount == 1 ? singular : plural;
+        return eligibleCount < selectedCount ? message + partialSuffix : message;
     }
 
     // Every TaxiwaySegmentShape's IsSelected is mutable (see its own doc

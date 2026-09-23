@@ -2391,3 +2391,109 @@ and never refreshed — unlike `ParkingSpotShape.Center`/`HeadingTip`, which
   (also confirms an unrelated `Taxi`-type path sharing the same `EndIndex`
   by coincidence is left untouched — only `Parking`-type paths are linked).
 - No persisted-data/AppData impact — same as the fix above.
+
+## New feature: delete hanging (dead-end) taxiway paths/points (2026-09-23)
+
+**User story:** as an editor, after I delete a parking spot (or otherwise
+edit the taxi network), a taxi path can be left "hanging" — still present in
+the data, but no longer leading anywhere useful (e.g. the ordinary Taxi-type
+stub that used to feed a parking spot, once that spot's own Parking-type
+path has already been cascade-removed). I want to select and delete such a
+path, or the dead-end point it leaves behind, via the same
+select-then-Delete-key gesture the app already uses for parking spots, and
+have both the path and its now-unreferenced point disappear together so the
+taxi network's data stays internally consistent.
+
+**Design, ported from the user's exact rules:**
+- A **taxiway point**'s "degree" is how many taxi paths touch it — a path's
+  `StartIndex` always counts (Start is always a real `TAXI_POINT`), but a
+  `Type == Parking` path's `EndIndex` never does (it references a
+  `TaxiwayParking` item instead — same convention
+  `AirportDiagramProjector.Project`'s point-synthesis loop and
+  `AirportXmlExporter.BuildTaxiwayPoints` already use).
+- A **taxiway point is deletable** only when its degree is exactly 1 (the
+  user's rule: "connected only to one taxi path") AND that one path is an
+  ordinary type (`Taxi` or `Path` — not `Runway`/`Parking`, the user's "not
+  leading to parking or runway" scoping). Deleting it means removing that
+  one connecting path — a taxiway point has no row of its own anywhere in
+  `AirportDetails` (`Diagram.TaxiwayPoints`/`TaxiwayPointEdits` are both
+  synthesized fresh from `AirportDetails.TaxiPaths`' distinct Start/End
+  indices), so once no path references its index, it simply stops being
+  synthesized — "both the taxipath and taxipoint must be removed at the
+  same time" falls out automatically rather than needing separate
+  bookkeeping.
+- A **taxiway path is deletable** only when it's an ordinary type AND at
+  least one of its two endpoints has degree 1 (the user's rule: "the
+  deleted taxipath has a taxipoint having only one path connected to it") —
+  i.e. it's a genuine dead end, not an interior thru-segment connecting two
+  hubs. Evaluated against the *current* graph, not iteratively across a
+  multi-selection, so pruning a longer dead-end chain is done by repeating
+  the gesture (removing the outermost hanging segment exposes the next one
+  as hanging in turn) rather than one recursive sweep — matches how a person
+  would actually find and prune a dead branch by hand, and avoids
+  silently removing more of the network than was explicitly selected.
+- Multi-select is supported (Ctrl+click, same as every other diagram
+  selection); ineligible selected items are silently left alone, but the
+  confirmation prompt says so explicitly when eligible count < selected
+  count, rather than claiming a bigger removal than what actually happens.
+
+**Implementation (`MainViewModel`):**
+- `BuildTaxiPointConnections` computes the degree/connections map described
+  above (defaults to the whole `Airport.TaxiPaths`; takes an explicit index
+  set for future narrowing, unused today).
+- `GetEligibleTaxiwaySegmentDeletions`/`GetEligibleTaxiwayPointDeletions`
+  apply the eligibility rules above to the current diagram selection;
+  `DeleteSelectedTaxiwaySegmentsCommand`/`DeleteSelectedTaxiwayPointsCommand`
+  confirm (via `IConfirmationService`, same no-undo precedent as
+  `DeleteSelectedParkingSpotsCommand`) and then remove the eligible path(s)
+  from `Airport.TaxiPaths`, followed by the same `SetAirport(Airport)`
+  full-rebuild `DeleteSelectedParkingSpots` already uses to keep
+  `Diagram`/`TaxiPathEdits`/`TaxiwayPointEdits`/every filter and subscription
+  consistent.
+- New `DeleteSelectedCommand` is what `MainWindow`'s Delete `KeyBinding`
+  actually targets (replacing the direct
+  `DeleteSelectedParkingSpotsCommand` binding) — WPF doesn't cleanly support
+  multiple `InputBinding`s competing for the same key gesture, so a single
+  command dispatches by priority: parking spot selection first (the
+  original, established Delete behavior), then a taxiway path selection,
+  then a taxiway point selection. The three selections are independent (a
+  diagram click on one never clears the others), so more than one actually
+  being non-empty at once IS possible — the order just needs to be
+  deterministic. The three individual commands stay separately exposed
+  (and independently testable) for this dispatch and for any future
+  dedicated UI.
+- **Defensive fix bundled in, same precedent as the Parking Spots grid's own
+  `CanUserDeleteRows=False` fix:** the Taxi Paths and Taxiway Points grids
+  now also get `CanUserDeleteRows="False"`. Both were latent instances of
+  the identical bug class (WPF's own row-delete-on-Delete-key gesture could
+  silently drop a row from a filtered `Visible*Edits` list without touching
+  `Airport.TaxiPaths`) — previously harmless only because nothing was bound
+  to Delete for these grids yet; now that Delete does real work for taxiway
+  paths/points, the latent gap becomes an active risk if left unfixed. The
+  Taxi Paths grid's row selection additionally syncs to
+  `TaxiwaySegmentShape.IsSelected` (`SyncTaxiwaySelectionFromRows`), so
+  without this fix, selecting a row there and pressing Delete could have
+  raced WPF's own silent row removal against the real
+  `DeleteSelectedTaxiwaySegmentsCommand` deletion.
+
+- **Backwards compatibility:** no persisted field was added, removed, or
+  reinterpreted — this only removes existing `TaxiPathSegment` rows the user
+  explicitly selected and confirmed, through the same `Airport.TaxiPaths`
+  mutation + `SetAirport` rebuild path parking-spot deletion already
+  established.
+- Test coverage: `MainViewModelTests` —
+  `DeleteSelectedTaxiwaySegmentsCommand_CanExecute_TrueOnlyWhenAHangingOrdinaryPathIsSelected`,
+  `DeleteSelectedTaxiwaySegments_RemovesPath_AndDropsTheNowOrphanedPoint`,
+  `DeleteSelectedTaxiwaySegments_PathBetweenTwoHubs_IsNotEligible`,
+  `DeleteSelectedTaxiwaySegments_RunwayOrParkingTypedPath_IsNotEligibleEvenIfHanging`
+  (`[Theory]`, both types), `DeleteSelectedTaxiwaySegments_ConfirmationMessage_NotesIneligibleSelectionsAreLeftAlone`,
+  `DeleteSelectedTaxiwayPointsCommand_CanExecute_TrueOnlyWhenADegreeOnePointIsSelected`,
+  `DeleteSelectedTaxiwayPoints_RemovesItsSoleConnectingPath`,
+  `DeleteSelectedTaxiwayPoints_PointWhoseOnlyConnectionIsRunwayOrParking_IsNotEligible`
+  (`[Theory]`, both types), `DeleteSelectedCommand_NoSelection_CanExecuteFalse`,
+  `DeleteSelectedCommand_TaxiwaySegmentSelected_DeletesIt`,
+  `DeleteSelectedCommand_TaxiwayPointSelected_DeletesItsConnectingPath`,
+  `DeleteSelectedCommand_ParkingSpotSelectionTakesPriorityOverATaxiwaySelection`.
+  The confirmation dialog's real WPF `MessageBox` and the Delete key itself
+  (real keyboard input) are not covered by automated tests — verified
+  manually, same exclusion category as `DeleteSelectedParkingSpots`' own.

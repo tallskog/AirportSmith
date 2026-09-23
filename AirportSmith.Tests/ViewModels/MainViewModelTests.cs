@@ -1757,4 +1757,208 @@ public class MainViewModelTests
         vm2.DeleteSelectedParkingSpotsCommand.Execute(null);
         Assert.Contains("2 parking spots", confirmation.LastMessage);
     }
+
+    // --- Delete hanging taxiway paths/points (GetEligibleTaxiwaySegmentDeletions/
+    // GetEligibleTaxiwayPointDeletions/DeleteSelectedTaxiwaySegments/
+    // DeleteSelectedTaxiwayPoints/DeleteSelected) ---
+    //
+    // BuildAirportWithThreeTaxiwayPoints (see its own doc comment) gives a
+    // 2-segment chain: path[0] 0->1, path[1] 1->2. Point 0 and point 2 are
+    // dead ends (degree 1, touched by only one path each); point 1 is a hub
+    // (degree 2, touched by both).
+
+    [Fact]
+    public void DeleteSelectedTaxiwaySegmentsCommand_CanExecute_TrueOnlyWhenAHangingOrdinaryPathIsSelected()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints());
+        Assert.False(vm.DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null));
+
+        // path[0] (0->1) is hanging at point 0 (degree 1), so it's eligible
+        // even though its other end (point 1) is a hub.
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram!.TaxiwaySegments[0], false));
+        Assert.True(vm.DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null));
+
+        vm.ClearTaxiwaySelectionCommand.Execute(null);
+        Assert.False(vm.DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedTaxiwaySegments_RemovesPath_AndDropsTheNowOrphanedPoint()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints(), new FakeConfirmationService());
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram!.TaxiwaySegments[0], false));
+
+        vm.DeleteSelectedTaxiwaySegmentsCommand.Execute(null);
+
+        var remaining = Assert.Single(vm.Airport!.TaxiPaths);
+        Assert.Equal(1, remaining.StartIndex);
+        Assert.Equal(2, remaining.EndIndex);
+        // Point 0 isn't referenced by anything anymore — it's not
+        // synthesized into TaxiwayPoints/TaxiPaths at all, "deleting" it
+        // without any separate bookkeeping (see
+        // DeleteSelectedTaxiwaySegments' own doc comment).
+        Assert.Equal([1, 2], vm.Diagram!.TaxiwayPoints.Select(p => p.Index));
+    }
+
+    [Fact]
+    public void DeleteSelectedTaxiwaySegments_PathBetweenTwoHubs_IsNotEligible()
+    {
+        // A straight 3-segment chain: 0->1->2->3. The middle segment (1->2)
+        // connects two hubs (point 1 and point 2 each also touch an outer
+        // segment), so removing it would fragment a real thru-route rather
+        // than prune a dead end — not what this cleanup gesture is for.
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 0, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 1, EndIndex = 2, StartXMeters = 10, StartZMeters = 0, EndXMeters = 20, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 2, EndIndex = 3, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
+        var vm = CreateViewModelWithAirport(airport);
+
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram!.TaxiwaySegments[1], false));
+
+        Assert.False(vm.DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null));
+    }
+
+    [Theory]
+    [InlineData(TaxiPathType.Runway)]
+    [InlineData(TaxiPathType.Parking)]
+    public void DeleteSelectedTaxiwaySegments_RunwayOrParkingTypedPath_IsNotEligibleEvenIfHanging(TaxiPathType type)
+    {
+        // A single, fully isolated path — both endpoints are degree 1 (the
+        // "hanging" condition is satisfied), but its Type isn't ordinary, so
+        // it's still excluded ("not leading to parking or runway"): a
+        // Runway-type path is a structural entrance/exit stub, and a
+        // Parking-type path already has its own dedicated removal path via
+        // DeleteSelectedParkingSpots.
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = type, WidthMeters = 10, StartIndex = 0, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        var vm = CreateViewModelWithAirport(airport);
+        var shape = Assert.Single(vm.Diagram!.TaxiwaySegments);
+
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape, false));
+
+        Assert.False(vm.DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedTaxiwaySegments_ConfirmationMessage_NotesIneligibleSelectionsAreLeftAlone()
+    {
+        // Same 3-segment chain as the "between two hubs" test: select the
+        // eligible outer segment AND the ineligible middle one together.
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 0, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 1, EndIndex = 2, StartXMeters = 10, StartZMeters = 0, EndXMeters = 20, EndZMeters = 0 });
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 2, EndIndex = 3, StartXMeters = 20, StartZMeters = 0, EndXMeters = 30, EndZMeters = 0 });
+        var confirmation = new FakeConfirmationService();
+        var vm = CreateViewModelWithAirport(airport, confirmation);
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram!.TaxiwaySegments[0], false));
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram.TaxiwaySegments[1], true));
+
+        vm.DeleteSelectedTaxiwaySegmentsCommand.Execute(null);
+
+        Assert.Contains("Delete 1 taxiway path", confirmation.LastMessage);
+        Assert.Contains("left as-is", confirmation.LastMessage);
+        // Only the eligible one (0->1) was actually removed; the ineligible
+        // middle segment (1->2) survives untouched.
+        Assert.Equal(2, vm.Airport!.TaxiPaths.Count);
+        Assert.DoesNotContain(vm.Airport.TaxiPaths, p => p.StartIndex == 0 && p.EndIndex == 1);
+        Assert.Contains(vm.Airport.TaxiPaths, p => p.StartIndex == 1 && p.EndIndex == 2);
+    }
+
+    [Fact]
+    public void DeleteSelectedTaxiwayPointsCommand_CanExecute_TrueOnlyWhenADegreeOnePointIsSelected()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints());
+        Assert.False(vm.DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
+
+        var point0 = vm.Diagram!.TaxiwayPoints.Single(p => p.Index == 0);
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, false));
+        Assert.True(vm.DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
+
+        var point1 = vm.Diagram.TaxiwayPoints.Single(p => p.Index == 1); // the hub, degree 2
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point1, false));
+        Assert.False(vm.DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedTaxiwayPoints_RemovesItsSoleConnectingPath()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints(), new FakeConfirmationService());
+        var point0 = vm.Diagram!.TaxiwayPoints.Single(p => p.Index == 0);
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, false));
+
+        vm.DeleteSelectedTaxiwayPointsCommand.Execute(null);
+
+        var remaining = Assert.Single(vm.Airport!.TaxiPaths);
+        Assert.Equal(1, remaining.StartIndex);
+        Assert.Equal(2, remaining.EndIndex);
+    }
+
+    [Theory]
+    [InlineData(TaxiPathType.Runway)]
+    [InlineData(TaxiPathType.Parking)]
+    public void DeleteSelectedTaxiwayPoints_PointWhoseOnlyConnectionIsRunwayOrParking_IsNotEligible(TaxiPathType type)
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = type, WidthMeters = 10, StartIndex = 5, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        var vm = CreateViewModelWithAirport(airport);
+        var point5 = vm.Diagram!.TaxiwayPoints.Single(p => p.Index == 5);
+
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point5, false));
+
+        Assert.False(vm.DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedCommand_NoSelection_CanExecuteFalse()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints());
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void DeleteSelectedCommand_TaxiwaySegmentSelected_DeletesIt()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints(), new FakeConfirmationService());
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(vm.Diagram!.TaxiwaySegments[0], false));
+
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+        vm.DeleteSelectedCommand.Execute(null);
+
+        Assert.Single(vm.Airport!.TaxiPaths);
+    }
+
+    [Fact]
+    public void DeleteSelectedCommand_TaxiwayPointSelected_DeletesItsConnectingPath()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints(), new FakeConfirmationService());
+        var point0 = vm.Diagram!.TaxiwayPoints.Single(p => p.Index == 0);
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point0, false));
+
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+        vm.DeleteSelectedCommand.Execute(null);
+
+        Assert.Single(vm.Airport!.TaxiPaths);
+    }
+
+    // The three selections (parking spot / taxiway path / taxiway point) are
+    // independent — see ToggleTaxiwaySelection's own doc comment — so more
+    // than one can be non-empty at once. DeleteSelected's priority order
+    // (parking wins) must then determine which one Delete actually acts on.
+    [Fact]
+    public void DeleteSelectedCommand_ParkingSpotSelectionTakesPriorityOverATaxiwaySelection()
+    {
+        var airport = BuildAirportWithThreeParkingSpots();
+        airport.TaxiPaths.Add(new TaxiPathSegment { Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 0, EndIndex = 1, StartXMeters = 0, StartZMeters = 0, EndXMeters = 10, EndZMeters = 0 });
+        var vm = CreateViewModelWithAirport(airport, new FakeConfirmationService());
+        vm.ToggleParkingSpotSelectionCommand.Execute(new ParkingSpotSelectionRequest(vm.Diagram!.ParkingSpots[0], false));
+        var segmentShape = Assert.Single(vm.Diagram.TaxiwaySegments);
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(segmentShape, false));
+
+        vm.DeleteSelectedCommand.Execute(null);
+
+        // The selected parking spot was removed (priority winner); the
+        // also-selected, lower-priority taxiway path was left untouched.
+        Assert.Equal(2, vm.Airport!.ParkingSpots.Count);
+        Assert.Single(vm.Airport.TaxiPaths);
+    }
 }

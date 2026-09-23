@@ -9,15 +9,19 @@
         MinHeight="480" MinWidth="820"
         WindowStartupLocation="CenterScreen">
 
-    <!-- The app's first keyboard shortcut: Delete removes every currently-
-         selected parking spot (see MainViewModel.DeleteSelectedParkingSpotsCommand),
-         with its own confirmation prompt since there's no undo. A Window-level
-         binding fires regardless of which control has focus, UNLESS that
-         control already consumes the Delete key itself (e.g. a grid text cell
-         mid-edit keeps deleting the selected text, as before) — and
-         CanExecute is false whenever nothing is actually selected. -->
+    <!-- The app's first keyboard shortcut: Delete removes whatever is
+         currently selected on the diagram — a parking spot, a taxiway path,
+         or a taxiway point (see MainViewModel.DeleteSelectedCommand, which
+         dispatches to whichever of DeleteSelectedParkingSpotsCommand/
+         DeleteSelectedTaxiwaySegmentsCommand/DeleteSelectedTaxiwayPointsCommand
+         actually applies) — with its own confirmation prompt since there's
+         no undo. A Window-level binding fires regardless of which control has
+         focus, UNLESS that control already consumes the Delete key itself
+         (e.g. a grid text cell mid-edit keeps deleting the selected text, as
+         before) — and CanExecute is false whenever nothing selected is
+         actually eligible for deletion. -->
     <Window.InputBindings>
-        <KeyBinding Key="Delete" Command="{Binding DeleteSelectedParkingSpotsCommand}"/>
+        <KeyBinding Key="Delete" Command="{Binding DeleteSelectedCommand}"/>
     </Window.InputBindings>
 
     <Grid Margin="10">
@@ -243,9 +247,15 @@
                                  Window didn't fix it either), unlike a plain sibling control (e.g. the
                                  Taxiway Points grid's "Hide All from Diagram" checkbox). Each header's
                                  filter controls below bind directly (e.g. {Binding NameFilter}) against
-                                 that explicitly-set DataContext. -->
+                                 that explicitly-set DataContext. Since selecting a row here drives the
+                                 same diagram TaxiwaySegmentShape.IsSelected the Delete key reads
+                                 (SyncTaxiwaySelectionFromRows), CanUserDeleteRows=False for the same
+                                 reason as the Parking Spots grid above — otherwise WPF's own row-delete
+                                 gesture could silently drop a row from this filtered list on Delete,
+                                 instead of (or alongside) MainViewModel.DeleteSelectedTaxiwaySegmentsCommand's
+                                 real removal. -->
                             <DataGrid x:Name="TaxiPathsGrid" Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
-                                      CanUserSortColumns="False"
+                                      CanUserSortColumns="False" CanUserDeleteRows="False"
                                       SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="TaxiPathsGrid_SelectionChanged"
                                       ItemsSource="{Binding DataContext.VisibleTaxiPathEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
@@ -469,8 +479,14 @@
                                  TaxiwayPointEditViewModel.BuildAll). Index/X/Z are read-only (derived
                                  from the underlying taxi path data, not independently editable);
                                  Type/Orientation write through to every taxi path segment sharing that
-                                 point. -->
-                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False"
+                                 point. CanUserDeleteRows=False, same defensive reason as the Taxi
+                                 Paths/Parking Spots grids above — Delete here (unlike the Taxi Paths
+                                 grid) doesn't sync row selection back to the diagram, but a visually
+                                 selected row could still let WPF's own row-delete gesture silently drop
+                                 it from this filtered list on Delete without touching Airport.TaxiPaths
+                                 at all. Deleting a taxiway point is diagram-selection-driven only — see
+                                 MainViewModel.DeleteSelectedTaxiwayPointsCommand. -->
+                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                                       ItemsSource="{Binding DataContext.VisibleTaxiwayPointEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Index" Width="50" IsReadOnly="True" Binding="{Binding Index}"/>
@@ -513,9 +529,12 @@
                                  SDK's enumerated codes (see EnumOptions.ParkingTypes). Index is
                                  the sim's own TAXI_PARKING row index, read-only since Parking-type taxi
                                  paths reference it. CanUserDeleteRows=False so pressing Delete here can
-                                 only ever mean DeleteSelectedParkingSpotsCommand above — without it,
-                                 WPF's own default row-delete gesture could silently remove a visually
-                                 selected row from this filtered list without touching Airport.ParkingSpots. -->
+                                 only ever mean the Window-level DeleteSelectedCommand above (which reads
+                                 diagram selection, not this grid's row selection) — without it, WPF's own
+                                 default row-delete gesture could silently remove a visually selected row
+                                 from this filtered list without touching Airport.ParkingSpots. Same
+                                 defensive fix on the Taxi Paths/Taxiway Points grids below, now that
+                                 Delete can also mean a taxiway path/point deletion. -->
                             <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                                       ItemsSource="{Binding DataContext.VisibleParkingSpotEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
