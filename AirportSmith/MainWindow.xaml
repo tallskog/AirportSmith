@@ -51,6 +51,18 @@
                     Visibility="{Binding IsProjectStoreAvailable, Converter={StaticResource BoolToVisibility}}"/>
             <Button Content="Export Airport XML" Command="{Binding ExportXmlCommand}" Margin="10,0,0,0" Padding="10,2"
                     Visibility="{Binding IsXmlExportAvailable, Converter={StaticResource BoolToVisibility}}"/>
+            <!-- New-release detection (see UpdateViewModel): the green badge
+                 only appears once a newer published version has been
+                 downloaded in the background. -->
+            <StackPanel Orientation="Horizontal" Margin="20,0,0,0"
+                        Visibility="{Binding IsUpdateCheckAvailable, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding Updates.CurrentVersionText}" VerticalAlignment="Center" Foreground="Gray"/>
+                <Button Content="Check for Updates" Command="{Binding Updates.CheckForUpdatesCommand}" Margin="10,0,0,0" Padding="10,2"/>
+                <Button Content="{Binding Updates.UpdateReadyText}" Command="{Binding Updates.RestartToUpdateCommand}" Margin="10,0,0,0" Padding="10,2"
+                        Background="LightGreen" FontWeight="Bold"
+                        Visibility="{Binding Updates.IsUpdateReady, Converter={StaticResource BoolToVisibility}}"/>
+                <TextBlock Text="{Binding Updates.StatusText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
         </StackPanel>
 
         <TextBlock Grid.Row="1" Text="{Binding LastExportPath, StringFormat='Saved to: {0}'}" Margin="0,4,0,0"

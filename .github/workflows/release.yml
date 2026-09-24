@@ -1,0 +1,83 @@
+name: Release
+
+# Pushing a vX.Y.Z tag builds, tests, packages (Velopack) and publishes a
+# GitHub Release. Installed copies of AirportSmith detect it on next startup
+# (see UpdateViewModel / VelopackUpdateService).
+on:
+  push:
+    tags: ['v*.*.*']
+
+env:
+  VPK_VERSION: '1.2.158'   # keep in sync with the Velopack PackageReference
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # required to create GitHub Releases and upload assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Extract version from tag
+        id: ver
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      # CLAUDE.md convention: the tagged commit must already carry the
+      # matching <Version> in the csproj.
+      - name: Verify tag matches csproj <Version>
+        shell: pwsh
+        run: |
+          $csproj = [xml](Get-Content AirportSmith/AirportSmith.csproj)
+          $projVersion = @($csproj.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ })[0]
+          if ($projVersion -ne '${{ steps.ver.outputs.VERSION }}') {
+            Write-Error "Tag ${{ github.ref_name }} does not match csproj <Version>$projVersion</Version>"
+            exit 1
+          }
+
+      - name: Build & test
+        run: |
+          dotnet build AirportSmith.slnx
+          dotnet test AirportSmith.slnx --no-build
+
+      - name: Publish (self-contained win-x64)
+        run: >
+          dotnet publish AirportSmith/AirportSmith.csproj
+          -c Release -r win-x64 --self-contained
+          -p:Version=${{ steps.ver.outputs.VERSION }}
+          -o publish/
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version ${{ env.VPK_VERSION }}
+
+      - name: Download existing Velopack releases (enables delta packages)
+        run: >
+          vpk download github
+          --repoUrl https://github.com/${{ github.repository }}
+          --token ${{ secrets.GITHUB_TOKEN }}
+          --outputDir releases/
+
+      - name: Pack with Velopack
+        run: >
+          vpk pack
+          --packId AirportSmith
+          --packVersion ${{ steps.ver.outputs.VERSION }}
+          --packDir publish/
+          --outputDir releases/
+
+      # --publish: a draft release is invisible to the app's anonymous
+      # update check, so publish it immediately.
+      - name: Upload to GitHub Release
+        run: >
+          vpk upload github
+          --repoUrl https://github.com/${{ github.repository }}
+          --token ${{ secrets.GITHUB_TOKEN }}
+          --outputDir releases/
+          --tag ${{ github.ref_name }}
+          --releaseName "AirportSmith ${{ github.ref_name }}"
+          --publish

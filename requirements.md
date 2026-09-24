@@ -408,7 +408,7 @@ styling) remain draft, below.
 - "© OpenStreetMap contributors" is shown visibly over the map whenever the
   layer is on.
 - A previously-fetched tile is served from a local disk cache
-  (`%LocalAppData%\AirportSmith[-dev]\MapTiles`) for at least 7 days before
+  (`%LocalAppData%\AirportSmith-data|-dev\MapTiles`) for at least 7 days before
   being eligible for re-fetch, honoring a longer `Cache-Control: max-age` from
   the server when present; a cached tile renders with no network access
   needed.
@@ -1857,7 +1857,7 @@ These are draft candidates surfaced by the research above, not approved user sto
    findings. Still draft/open:
    - **Phase 1 — satellite.** User supplies their own Esri (ArcGIS Location
      Platform, 2M free tiles/month) or Mapbox (750k free/month) key; needs a
-     new app-level settings store (`%LocalAppData%\AirportSmith[-dev]\settings.json`,
+     new app-level settings store (`%LocalAppData%\AirportSmith-data|-dev\settings.json`,
      never committed) and a provider abstraction behind `IMapTileSource` so
      OSM/Esri/Mapbox are interchangeable. Not verified: whether each
      provider's terms allow deriving positions from imagery.
@@ -2749,3 +2749,80 @@ backs the panel's `Visibility` in place of the old direct
   button's real click/visual behavior is WPF view-layer rendering, not
   covered by automated tests per CLAUDE.md's testing policy — needs manual
   verification.
+
+## New feature: GitHub repository, CI, releases, and new-version detection (2026-09-24)
+
+The project moves to a public GitHub repository,
+`https://github.com/tallskog/AirportSmith`, with CI and automated releases.
+The first published version is **v0.0.1**. The csproj `<Version>` changes from
+the placeholder `0.1.0` to `0.0.1`. The "v0.1" epic labels in this file are
+still planning-phase names, not release numbers.
+
+**User stories**
+- As the author, I want every push/PR to `main` built and tested
+  automatically, so regressions are caught without relying on local runs.
+- As the author, I want pushing a `vX.Y.Z` tag to build, package, and publish
+  a GitHub Release with an installer, so I don't do release steps by hand.
+- As a user, I want AirportSmith to notice when a newer version has been
+  published and let me update with one click.
+
+**Acceptance criteria**
+- `.github/workflows/ci.yml`: on push to `main` and on PRs, builds
+  `AirportSmith.slnx` and runs `dotnet test` on `windows-latest`. It uses the
+  Debug configuration so `AppDataHelperTests` keeps its dev-path guardrail.
+- `.github/workflows/release.yml`: on a `v*.*.*` tag push it:
+  - fails if the tag doesn't match the csproj `<Version>` (the CLAUDE.md
+    versioning convention);
+  - builds and tests;
+  - publishes a self-contained win-x64 build;
+  - packs it with Velopack (`vpk`, pinned to the same version as the
+    `Velopack` NuGet package);
+  - uploads a **published** (not draft) GitHub Release containing
+    `AirportSmith-win-Setup.exe`, a portable zip, and the Velopack update
+    feed. Delta packages are produced from the previous release when one
+    exists.
+- Update detection (`UpdateViewModel` over `IUpdateService`, real
+  implementation `VelopackUpdateService` reading the public GitHub Releases
+  feed anonymously, no token):
+  - At startup, an installed copy silently checks for a newer non-prerelease
+    version and pre-downloads it. It then shows a green
+    "⬆ vX.Y.Z ready — click to restart" button in the top toolbar. Clicking
+    that button applies the update and restarts the app.
+  - "No update" and any failure (offline, GitHub unreachable) are silent at
+    startup and never block or crash the app.
+  - A "Check for Updates" button does the same on demand, reporting "You are
+    running the latest version (vX.Y.Z).", "Update check failed: …", or the
+    ready badge.
+  - A non-installed run (dev build, `dotnet run`) never contacts the feed. A
+    manual check says "Updates are only available in the installed version."
+  - The running version is shown next to the button (`vX.Y.Z`).
+  - `VelopackApp.Build().Run()` runs first in `App.OnStartup` so
+    Velopack's install/update/uninstall hooks work.
+- **Release data folder moved** (user decision, 2026-09-24). This changes
+  the CLAUDE.md AppData convention:
+  - Velopack installs to `%LocalAppData%\<packId>\` =
+    `%LocalAppData%\AirportSmith\`. That was the Release AppData path, and a
+    Velopack uninstall deletes the whole folder, saved projects included.
+  - Release user data therefore moves to `%LocalAppData%\AirportSmith-data\`
+    (`AppDataHelper`). Debug stays `%LocalAppData%\AirportSmith-dev\`.
+  - The packId stays `AirportSmith` and must never change after the first
+    release, or installed copies stop receiving updates.
+- **Backwards compatibility:** no Release build had ever shipped, so no
+  existing user data sits at the old Release path and nothing needs
+  migrating. Project file, settings and cache formats are unchanged. Dev
+  data (`AirportSmith-dev`) is unaffected.
+
+**Test coverage**
+- `UpdateViewModelTests` (via `Fakes/FakeUpdateService`):
+  - background check downloads a newer version and shows the ready badge;
+  - up-to-date shows nothing;
+  - a failure is silent and non-fatal;
+  - a non-installed run never contacts the feed;
+  - manual check reports latest, newer, failure and not-installed correctly;
+  - restart applies the downloaded update;
+  - version text formatting;
+  - `MainViewModel` exposes `Updates` only when a service is wired.
+- Manual verification only: the real Velopack/GitHub round trip (install
+  v0.0.1 from Setup.exe, publish a later tag, confirm the badge appears and
+  the restart updates), the toolbar rendering, and the workflows themselves
+  (verified by their first real run on GitHub).

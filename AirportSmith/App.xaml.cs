@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using AirportSmith.Services;
 using AirportSmith.ViewModels;
+using Velopack;
 
 namespace AirportSmith;
 
@@ -9,6 +10,11 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Must run before anything else so Velopack can handle its
+        // install/update/uninstall hooks (it may exit the process for those).
+        // A no-op when not running as a Velopack-installed app (dev builds).
+        VelopackApp.Build().Run();
+
         // Forces every implicit WPF Binding string<->double conversion
         // (every numeric Edit tab grid column: VASI angle/X/Z/spacing,
         // parking spot heading/radius/X/Z, ...) to always accept "." as the
@@ -78,9 +84,14 @@ public partial class App : Application
         // always wired up, same as projectStore/xmlExporter above.
         IConfirmationService confirmationService = new ConfirmationService();
 
-        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService, confirmationService);
+        // Detects newly published GitHub releases (see UpdateViewModel).
+        IUpdateService updateService = new VelopackUpdateService();
+
+        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService, confirmationService, updateService);
         var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();
+
+        _ = viewModel.Updates!.CheckInBackgroundAsync();
     }
 }

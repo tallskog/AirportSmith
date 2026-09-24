@@ -9,7 +9,9 @@ public static class AppDataHelper
 #if DEBUG
         "AirportSmith-dev");
 #else
-        "AirportSmith");
+        // Not plain "AirportSmith": that is the Velopack install folder
+        // (%LocalAppData%\AirportSmith\), which an uninstall deletes wholesale.
+        "AirportSmith-data");
 #endif
 
     public static string AppDataPath => _appDataPath;

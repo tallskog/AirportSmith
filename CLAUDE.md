@@ -13,7 +13,7 @@ Solution: `AirportSmith.slnx`, project: `AirportSmith/AirportSmith.csproj`, test
 - **Out of scope for v0.1**: ground/apron visual polygons, static scenery objects/buildings, and any 2024-only taxiway/parking fields not exposed via Facility Data. Revisit only once the SimConnect Facility Data extraction path has been validated against a real airport.
 
 ## AppData path convention
-- **Release builds**: `%LocalAppData%\AirportSmith\`
+- **Release builds**: `%LocalAppData%\AirportSmith-data\`. Not plain `AirportSmith\`: that is the Velopack install folder, which an uninstall deletes wholesale.
 - **Debug builds**: `%LocalAppData%\AirportSmith-dev\`  (`#if DEBUG` in `Helpers/AppDataHelper.cs`)
 
 This keeps dev and installed-release data completely separate.
@@ -33,12 +33,12 @@ Before marking any task done, check whether it touches persisted user data (proj
 
 ## Committing
 - When the user explicitly asks to commit (e.g. "commit the code", "commit this"), just create the commit directly — no need to ask for confirmation first. This still follows the general git safety rules (new commit, not amend; no `--no-verify`; only files relevant to the change get staged, never a blanket `git add -A`).
-- No GitHub remote yet — local commits only until the user says otherwise.
+- Remote: `origin` = https://github.com/tallskog/AirportSmith (public). CI (`.github/workflows/ci.yml`) builds and tests every push/PR to `main`.
 
 ## Versioning
 - `AirportSmith/AirportSmith.csproj`'s `<Version>` must match the latest git tag (tag `vX.Y.Z` → `<Version>X.Y.Z</Version>`, no leading `v`).
 - When asked to tag a release (e.g. "tag this as vX.Y.Z"), update `<Version>` and commit that change *before* creating the tag, so the tagged commit already carries the matching version — don't tag first and fix the csproj after.
-- **Whenever the user says "push"**, this means the whole sequence end-to-end: classify the change(s) since the last tag under semver, bump `<Version>` accordingly, commit that bump, create/move the git tag to match, then push both the commits and the tag — all without waiting for a separate confirmation. (No GitHub remote is configured yet, so until one exists, "push" only covers the local tag/commit sequence — flag this to the user rather than silently skipping the push step.)
+- **Whenever the user says "push"**, this means the whole sequence end-to-end: classify the change(s) since the last tag under semver, bump `<Version>` accordingly, commit that bump, create/move the git tag to match, then push both the commits and the tag — all without waiting for a separate confirmation. Pushing the tag triggers `.github/workflows/release.yml`, which publishes the GitHub Release that installed copies auto-detect as an update. That workflow fails if the tag and `<Version>` disagree.
   - **Patch** (`X.Y.Z+1`) — bug fix only, no new capability.
   - **Minor** (`X.Y+1.0`) — a new feature or capability added, backward-compatible.
   - **Major** (`X+1.0.0`) — a breaking/incompatible change: old project/settings files would no longer load correctly, or a documented behavior a user could depend on is removed/changed incompatibly.

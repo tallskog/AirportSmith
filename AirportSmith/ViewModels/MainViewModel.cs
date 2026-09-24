@@ -421,6 +421,11 @@ public class MainViewModel : ViewModelBase
     // fetch/cache orchestration; this ViewModel only carries the reference.
     public IMapTileService? MapTileService => _mapTileService;
 
+    // Null when no update service was wired up (tests) — same optional-service
+    // convention as IsMapAvailable/IsXmlExportAvailable. See UpdateViewModel.
+    public UpdateViewModel? Updates { get; }
+    public bool IsUpdateCheckAvailable => Updates != null;
+
     // Exposed so MainWindow can drive Connect/Disconnect around the window
     // lifecycle without the ViewModel needing to know about HWNDs.
     public ISimConnectService SimConnect => _simConnect;
@@ -462,7 +467,7 @@ public class MainViewModel : ViewModelBase
     // future dedicated UI (e.g. a button) to bind to directly.
     public RelayCommand DeleteSelectedCommand { get; }
 
-    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null)
+    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null, IUpdateService? updateService = null)
     {
         _simConnect = simConnect;
         _debugDataStore = debugDataStore;
@@ -471,6 +476,7 @@ public class MainViewModel : ViewModelBase
         _xmlExporter = xmlExporter;
         _mapTileService = mapTileService;
         _confirmationService = confirmationService;
+        Updates = updateService == null ? null : new UpdateViewModel(updateService);
         TaxiNamesPicker = new ReadOnlyObservableCollection<TaxiNameEditViewModel>(TaxiNames);
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => IsValidIcao(IcaoInput));
