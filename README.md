@@ -42,3 +42,7 @@ dotnet build AirportSmith.slnx
 ```
 dotnet test AirportSmith.slnx
 ```
+
+## License
+
+[GNU General Public License v3.0](LICENSE)
