@@ -1338,6 +1338,34 @@ public class MainViewModelTests
         Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
     }
 
+    // Reported bug: hide a path on top so the one underneath can be clicked,
+    // then select that one — the grid is now scoped to the new selection, the
+    // hidden path can't be clicked on the diagram, and Clear Filters (column
+    // filters only, disabled with none set) couldn't bring its row back to
+    // un-hide it.
+    [Fact]
+    public void ClearTaxiPathFilterCommand_AlsoClearsDiagramSelection_SoHiddenPathRowsReturn()
+    {
+        var airport = BuildAirportForTaxiPathFiltering(out _, out _);
+        var vm = CreateViewModelWithAirport(airport);
+        var shape0 = vm.Diagram!.TaxiwaySegments[0];
+        var shape1 = vm.Diagram!.TaxiwaySegments[1];
+
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape0, ExtendSelection: false));
+        vm.TaxiPathEdits[0].IsHiddenFromDiagram = true;
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(shape1, ExtendSelection: false));
+        Assert.DoesNotContain(vm.TaxiPathEdits[0], vm.VisibleTaxiPathEdits);
+
+        Assert.False(vm.TaxiPathFilter.HasAnyFilter);
+        Assert.True(vm.ClearTaxiPathFilterCommand.CanExecute(null));
+        vm.ClearTaxiPathFilterCommand.Execute(null);
+
+        Assert.False(vm.HasTaxiwaySelection);
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+        Assert.True(vm.TaxiPathEdits[0].IsHiddenFromDiagram); // hide flag itself untouched
+        Assert.False(vm.ClearTaxiPathFilterCommand.CanExecute(null));
+    }
+
     // A filter must reflect current field values live — editing a row out
     // of matching a filter should drop it from VisibleTaxiPathEdits
     // immediately, same as if that value had been there when the filter was

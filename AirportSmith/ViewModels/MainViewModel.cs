@@ -494,7 +494,7 @@ public class MainViewModel : ViewModelBase
         OpenTaxiwayBatchEditCommand = new RelayCommand(OpenTaxiwayBatchEdit, () => HasTaxiwaySelection);
         ApplyTaxiwayBatchEditCommand = new RelayCommand(ApplyTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
         CloseTaxiwayBatchEditCommand = new RelayCommand(CloseTaxiwayBatchEdit, () => ShowTaxiwayBatchEditPopover);
-        ClearTaxiPathFilterCommand = new RelayCommand(TaxiPathFilter.Reset, () => TaxiPathFilter.HasAnyFilter);
+        ClearTaxiPathFilterCommand = new RelayCommand(ClearTaxiPathFilter, () => TaxiPathFilter.HasAnyFilter || HasTaxiwaySelection);
         ArmPrimaryLeftVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.PrimaryLeft), edit => edit != null);
         ArmPrimaryRightVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.PrimaryRight), edit => edit != null);
         ArmSecondaryLeftVasiPlacementCommand = new RelayCommand<RunwayEditViewModel>(edit => ArmVasiPlacement(edit, VasiSlot.SecondaryLeft), edit => edit != null);
@@ -1474,6 +1474,21 @@ public class MainViewModel : ViewModelBase
         RefreshTaxiwayFilter();
         RefreshTaxiwayPointFilter();
         RefreshParkingSpotFilter();
+    }
+
+    // The Taxi Paths grid's "Clear Filters" button: resets every column
+    // filter AND the diagram's taxiway selection, i.e. everything that can
+    // narrow the grid. Clearing the selection too fixes a reported bug: a
+    // path hidden from the diagram is auto-deselected and can't be clicked
+    // there, so once another path was selected its row was unreachable
+    // (only a click on empty diagram space brought it back). Taxiway point
+    // and parking spot selections have their own grids and are left alone.
+    private void ClearTaxiPathFilter()
+    {
+        foreach (var shape in SelectedTaxiwayShapes.ToList())
+            shape.IsSelected = false;
+        TaxiPathFilter.Reset();
+        RefreshTaxiwayFilter();
     }
 
     // Bound to a right-click on the diagram (see

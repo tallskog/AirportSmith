@@ -244,7 +244,9 @@
                                      column's header (see MainViewModel.TaxiPathFilter/
                                      MatchesTaxiPathFilter) — this just resets all of them at once,
                                      since clearing 13 individual filters by hand would be tedious.
-                                     Only enabled while at least one is actually set. -->
+                                     Also clears the diagram's taxiway selection (see
+                                     MainViewModel.ClearTaxiPathFilter), so it's enabled while either
+                                     a column filter or a taxiway selection is narrowing the grid. -->
                                 <Button Content="Clear Filters" Margin="12,0,0,0" Padding="8,1"
                                         Command="{Binding DataContext.ClearTaxiPathFilterCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
                             </StackPanel>

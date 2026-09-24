@@ -1009,8 +1009,10 @@ watermark itself still reaches the `TextBox` underneath.
   Line, Center Line Lighted, Hide from Diagram — with a leading "(any)"
   meaning no filter on that column). All active filters combine with (AND);
   a **Clear Filters** button next to the grid's header resets every one at
-  once and is only enabled while at least one is set
-  (`MainViewModel.TaxiPathFilter`/`ClearTaxiPathFilterCommand`). Filtering
+  once and also clears the diagram's taxiway selection. It is enabled while a
+  column filter is set or a taxiway is selected
+  (`MainViewModel.TaxiPathFilter`/`ClearTaxiPathFilterCommand`; amended
+  2026-09-24, see "Bug fix: hidden taxi paths could become unreachable"). Filtering
   combines with (AND), rather than replaces, the diagram's existing
   click-to-select filter — selecting taxiways on the diagram narrows the
   candidate rows first, then each column filter narrows that further
@@ -2859,3 +2861,39 @@ glow for the large PNG.
 testing policy. Manual check: the exe, title bar and taskbar show the icon, and
 the next release's `Setup.exe` and Start-menu shortcut do too. `vpk pack` with
 the icon was verified locally.
+
+## Bug fix: hidden taxi paths could become unreachable in the Taxi Paths grid (2026-09-24)
+
+**User report:** while renaming taxi paths, the user hid paths lying on top
+of others so the one underneath could be clicked. After hiding several, they
+could not make them visible again, and **Clear Filters** had no effect.
+
+**Root cause:** two things narrow the Taxi Paths grid:
+1. The per-column filters.
+2. The diagram selection: with any taxiway selected, the grid shows only the
+   selected path(s).
+
+Hiding a path deselects it, and a hidden path can't be clicked on the
+diagram. So once another path was selected, the hidden path's row was not in
+the grid, and it was out of reach. Clear Filters only reset the column filters
+and was disabled when none were set. The only way back was a click on empty
+diagram space, which isn't discoverable.
+
+**Fix (user decision):** Clear Filters now also clears the diagram's taxiway
+selection (`MainViewModel.ClearTaxiPathFilter`), so the grid shows every row
+again, hidden ones included, and they can be un-hidden. It is enabled while a
+column filter is set **or** a taxiway is selected.
+- It deselects taxiway paths only. Taxiway point and parking spot selections
+  have their own grids and are unchanged.
+- It never changes any path's Hide from Diagram flag.
+- If the batch-edit popover is open, the popover closes because the selection
+  is empty.
+
+**Backwards compatibility:** session-only UI state; no persisted data touched.
+
+**Test coverage:**
+- `MainViewModelTests.ClearTaxiPathFilterCommand_AlsoClearsDiagramSelection_SoHiddenPathRowsReturn`
+  reproduces the reported sequence (hide a path, select another, then Clear
+  Filters) and checks that the hidden row returns with its hide flag intact.
+- The existing `ClearTaxiPathFilterCommand_ResetsFiltersAndReflectsCanExecute`
+  still passes unchanged.
