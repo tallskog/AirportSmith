@@ -7,7 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <Version>0.0.1</Version>
+    <ApplicationIcon>AirportSmith.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="AirportSmith.ico" />
+    <Resource Include="AirportSmith.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Managed SimConnect wrapper (x64, .NET Framework 4.6.1 — loads via compat layer) -->

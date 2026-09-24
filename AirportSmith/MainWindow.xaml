@@ -5,6 +5,7 @@
         xmlns:inspector="clr-namespace:AirportSmith.Models.Inspector"
         xmlns:helpers="clr-namespace:AirportSmith.Helpers"
         Title="AirportSmith"
+        Icon="AirportSmith.ico"
         Height="700" Width="1100"
         MinHeight="480" MinWidth="820"
         WindowStartupLocation="CenterScreen">

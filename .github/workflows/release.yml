@@ -69,6 +69,8 @@ jobs:
           --packVersion ${{ steps.ver.outputs.VERSION }}
           --packDir publish/
           --outputDir releases/
+          --runtime win-x64
+          --icon AirportSmith/AirportSmith.ico
 
       # --publish: a draft release is invisible to the app's anonymous
       # update check, so publish it immediately.

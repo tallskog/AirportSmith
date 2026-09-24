@@ -2826,3 +2826,36 @@ still planning-phase names, not release numbers.
   v0.0.1 from Setup.exe, publish a later tag, confirm the badge appears and
   the restart updates), the toolbar rendering, and the workflows themselves
   (verified by their first real run on GitHub).
+
+## New feature: application icon (2026-09-24)
+
+The user picked concept B, "Anvil Takeoff", from four concepts on a
+comparison page. It's an anvil whose top face is a runway, with a plane
+climbing away from it. It uses DestinationPlanner's icon look: white glyph on
+a rounded tile with a light-to-deep blue gradient, faint swooshes, and a blue
+glow for the large PNG.
+
+**Acceptance criteria**
+- `AirportSmith/AirportSmith.ico` has 16/24/32/48/64/128/256 px PNG-compressed
+  frames. It's a square tile cropped to the edges, with a transparent
+  background and no glow, so it fills the taskbar/Start-menu slot.
+- `AirportSmith/AirportSmith.png` is the 1024 px version with glow on black,
+  matching `DestinationPlanner.png`.
+- Wired up the same way as DestinationPlanner:
+  - `<ApplicationIcon>` for the exe;
+  - `<Resource>` items;
+  - `MainWindow` `Icon` for the title bar and taskbar;
+  - `vpk pack --icon` for `Setup.exe` and the installed shortcuts.
+- Source artwork lives in `art/` so the icon can be regenerated:
+  - `AirportSmith-icon.svg` (glow on black);
+  - `AirportSmith-icon-tile.svg` (the ICO source);
+  - `make-ico.ps1`.
+- Release packaging fix found while testing: `vpk pack` now passes
+  `--runtime win-x64`. Without it, vpk labelled the self-contained x64 build
+  as x86 (this applies to v0.0.1).
+- **Backwards compatibility:** no persisted data touched.
+
+**Test coverage:** none automated. It's visual/packaging only, per CLAUDE.md's
+testing policy. Manual check: the exe, title bar and taskbar show the icon, and
+the next release's `Setup.exe` and Start-menu shortcut do too. `vpk pack` with
+the icon was verified locally.

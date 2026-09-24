@@ -16,6 +16,8 @@ AirportSmith checks for a newer published version every time it starts. If there
 
 Pushing a `vX.Y.Z` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It builds, tests, packages the app with [Velopack](https://velopack.io), and publishes a GitHub Release with the installer and update feed. The tag must match `<Version>` in `AirportSmith/AirportSmith.csproj`, or the workflow fails. [`ci.yml`](.github/workflows/ci.yml) builds and tests every push and pull request to `main`.
 
+The app icon's source artwork is in [`art/`](art/), along with the script that rebuilds `AirportSmith/AirportSmith.ico` from it.
+
 ## Usage
 
 1. Start MSFS 2024 and load into any session (the main menu is sufficient — an aircraft/flight does not need to be active).

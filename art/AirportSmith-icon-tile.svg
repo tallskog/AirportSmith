@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="138 128 748 748" width="1024" height="1024">
+<defs>
+<linearGradient id="bg" x1="0.25" y1="0" x2="0.75" y2="1"><stop offset="0" stop-color="#47CDFF"/><stop offset="0.55" stop-color="#2394EE"/><stop offset="1" stop-color="#196BDC"/></linearGradient>
+<linearGradient id="gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E4F1FF"/></linearGradient>
+<filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="42"/></filter>
+<clipPath id="clip"><rect x="138" y="128" width="748" height="748" rx="150"/></clipPath>
+</defs>
+<rect x="138" y="128" width="748" height="748" rx="150" fill="url(#bg)"/>
+<g clip-path="url(#clip)" fill="none" stroke="#8ADAFF" stroke-linecap="round">
+<path d="M 120 690 Q 340 660 520 560" stroke-width="14" stroke-opacity="0.30"/>
+<path d="M 120 750 Q 380 720 560 600" stroke-width="22" stroke-opacity="0.22"/>
+</g>
+<path d="M 214 420 L 800 408 L 800 486 L 668 486 Q 616 540 610 606 L 700 646 L 712 712 L 330 712 L 342 646 L 432 606 Q 426 540 376 486 L 330 486 Q 258 474 214 420 Z" fill="url(#gl)"/>
+<g fill="#2A8FEC"><rect x="400" y="441" width="36" height="12" rx="4"/><rect x="466" y="441" width="36" height="12" rx="4"/><rect x="532" y="440" width="36" height="12" rx="4"/><rect x="598" y="439" width="36" height="12" rx="4"/><rect x="664" y="438" width="36" height="12" rx="4"/><rect x="730" y="437" width="36" height="12" rx="4"/></g>
+<g transform="translate(640 250) rotate(50) scale(0.62)" fill="url(#gl)">
+<path d="M 0 -150 C 18 -150 22 -120 22 -100 L 22 -30 L 150 30 L 150 58 L 22 26 L 18 100 L 58 130 L 58 150 L 0 136 L -58 150 L -58 130 L -18 100 L -22 26 L -150 58 L -150 30 L -22 -30 L -22 -100 C -22 -120 -18 -150 0 -150 Z"/>
+</g>
+</svg>
