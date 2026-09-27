@@ -413,6 +413,34 @@ public partial class AirportDiagramView : UserControl
         }
     }
 
+    // Smallest area ZoomToBounds shows, in canvas meters, so a single short
+    // path still has its surroundings in view rather than filling the screen.
+    private const double MinZoomAreaMeters = 250;
+    private const double ZoomPaddingFraction = 0.15;
+
+    // Zooms and pans so the given canvas-space area fills the view (with some
+    // padding), keeping within the same zoom limits as the mouse wheel.
+    public void ZoomToBounds(DiagramBounds bounds)
+    {
+        if (DataContext is not AirportDiagram) return;
+        if (ActualWidth <= 0 || ActualHeight <= 0) return;
+
+        var width = Math.Max(bounds.MaxX - bounds.MinX, MinZoomAreaMeters) * (1 + 2 * ZoomPaddingFraction);
+        var height = Math.Max(bounds.MaxY - bounds.MinY, MinZoomAreaMeters) * (1 + 2 * ZoomPaddingFraction);
+        var scale = Math.Clamp(Math.Min(ActualWidth / width, ActualHeight / height), _fitScale * MinScaleFactor, _fitScale * MaxScaleFactor);
+
+        // screen = canvas * scale + translate; put the area's center in the
+        // middle of the view.
+        var centerX = (bounds.MinX + bounds.MaxX) / 2;
+        var centerY = (bounds.MinY + bounds.MaxY) / 2;
+        DiagramScale.ScaleX = DiagramScale.ScaleY = scale;
+        DiagramTranslate.X = ActualWidth / 2 - centerX * scale;
+        DiagramTranslate.Y = ActualHeight / 2 - centerY * scale;
+
+        _userAdjustedView = true;
+        ScheduleTileRefresh();
+    }
+
     private void FitToView()
     {
         if (DataContext is not AirportDiagram diagram) return;

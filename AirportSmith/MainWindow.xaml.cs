@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using AirportSmith.ViewModels;
@@ -17,6 +18,7 @@ public partial class MainWindow : Window
         _viewModel = viewModel;
         DataContext = _viewModel;
         _viewModel.TaxiNameAdded += OnTaxiNameAdded;
+        _viewModel.ZoomToDiagramBoundsRequested += (_, bounds) => EditDiagramView.ZoomToBounds(bounds);
     }
 
     // Scrolls the Taxi Names grid to a just-added name and puts the cursor in
@@ -107,6 +109,57 @@ public partial class MainWindow : Window
             return;
 
         _viewModel.SyncTaxiwaySelectionFromRows(grid.SelectedItems.Cast<TaxiPathEditViewModel>());
+    }
+
+    // Same reason as TaxiPathsGrid_SelectionChanged: DataGrid has no bindable
+    // SelectedItems. Only the user's own row clicks matter here; when the list
+    // is replaced or emptied, the ViewModel has already dealt with the
+    // highlight (DismissTaxiNameSuggestions), so an empty selection is ignored.
+    private void TaxiNameSuggestionsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not DataGrid grid || grid.SelectedItems.Count == 0) return;
+        _viewModel.HighlightTaxiNameSuggestions(grid.SelectedItems.Cast<TaxiNameSuggestionViewModel>());
+    }
+
+    // Ticking the Accept box of one of several selected rows applies it to
+    // all of them (MainViewModel.SetTaxiNameSuggestionsAccepted). The catch:
+    // DataGridCell reselects its row on ANY mouse-down inside it, even one a
+    // CheckBox already handled, which collapses a multi-row selection to just
+    // the clicked row before the CheckBox's Click fires. So the selection is
+    // captured here on the way down, then used (and restored) on Click.
+    private List<TaxiNameSuggestionViewModel>? _acceptGroup;
+
+    private void SuggestionAccept_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _acceptGroup = null;
+        if (sender is FrameworkElement { DataContext: TaxiNameSuggestionViewModel row } &&
+            TaxiNameSuggestionsGrid.SelectedItems.Count > 1 && TaxiNameSuggestionsGrid.SelectedItems.Contains(row))
+        {
+            _acceptGroup = TaxiNameSuggestionsGrid.SelectedItems.Cast<TaxiNameSuggestionViewModel>().ToList();
+        }
+    }
+
+    private void SuggestionAccept_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: TaxiNameSuggestionViewModel row }) return;
+
+        // A mouse click uses the group captured on the way down; Space on a
+        // focused checkbox doesn't reselect, so the live selection is fine.
+        var group = _acceptGroup
+            ?? (TaxiNameSuggestionsGrid.SelectedItems.Count > 1 && TaxiNameSuggestionsGrid.SelectedItems.Contains(row)
+                ? TaxiNameSuggestionsGrid.SelectedItems.Cast<TaxiNameSuggestionViewModel>().ToList()
+                : null);
+        _acceptGroup = null;
+        if (group is null || !group.Contains(row)) return;
+
+        _viewModel.SetTaxiNameSuggestionsAccepted(group, row.IsAccepted);
+
+        if (TaxiNameSuggestionsGrid.SelectedItems.Count != group.Count)
+        {
+            TaxiNameSuggestionsGrid.SelectedItems.Clear();
+            foreach (var item in group)
+                TaxiNameSuggestionsGrid.SelectedItems.Add(item);
+        }
     }
 
     protected override void OnSourceInitialized(EventArgs e)

@@ -76,7 +76,8 @@ public partial class App : Application
         // call. SPIKE-ONLY endpoint/User-Agent — see OsmMapTileSource's own
         // doc comment for why this must be revisited before the app is
         // distributed beyond the author's own manual testing.
-        IMapTileSource mapTileSource = new OsmMapTileSource(userAgent: "AirportSmith/0.1 (dev build)");
+        const string osmUserAgent = "AirportSmith/0.1 (dev build)";
+        IMapTileSource mapTileSource = new OsmMapTileSource(userAgent: osmUserAgent);
         IMapTileCache mapTileCache = new MapTileDiskCache();
         IMapTileService mapTileService = new MapTileService(mapTileSource, mapTileCache);
 
@@ -87,7 +88,7 @@ public partial class App : Application
         // Detects newly published GitHub releases (see UpdateViewModel).
         IUpdateService updateService = new VelopackUpdateService();
 
-        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService, confirmationService, updateService);
+        var viewModel = new MainViewModel(simConnect, debugDataStore, fileDialogService, projectStore, xmlExporter, mapTileService, confirmationService, updateService, new OverpassTaxiwaySource(osmUserAgent));
         var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();

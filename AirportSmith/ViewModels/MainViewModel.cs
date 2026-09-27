@@ -17,6 +17,7 @@ public class MainViewModel : ViewModelBase
     private readonly IAirportXmlExporter? _xmlExporter;
     private readonly IMapTileService? _mapTileService;
     private readonly IConfirmationService? _confirmationService;
+    private readonly IOsmTaxiwaySource? _osmTaxiwaySource;
 
     private string _icaoInput = string.Empty;
     private bool _isLoading;
@@ -454,6 +455,94 @@ public class MainViewModel : ViewModelBase
     public RelayCommand DismissXmlExportWarningsCommand { get; }
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
+    public AsyncRelayCommand SuggestTaxiNamesFromOsmCommand { get; }
+    public RelayCommand ApplyTaxiNameSuggestionsCommand { get; }
+    public RelayCommand DismissTaxiNameSuggestionsCommand { get; }
+    public RelayCommand<TaxiNameSuggestionViewModel> RemoveTaxiNameSuggestionCommand { get; }
+
+    // --- Suggest taxi names from OpenStreetMap (see TaxiwayNameSuggester) ---
+
+    // Hides the button entirely when no OSM source was injected (tests).
+    public bool IsOsmNameSuggestionAvailable => _osmTaxiwaySource != null;
+
+    private bool _isFetchingOsmNames;
+    public bool IsFetchingOsmNames
+    {
+        get => _isFetchingOsmNames;
+        private set => SetField(ref _isFetchingOsmNames, value);
+    }
+
+    // The review panel's summary line, or the error if the fetch failed.
+    // Null while no suggestion session is open — which also hides the panel.
+    private string? _osmNameSuggestionStatus;
+    public string? OsmNameSuggestionStatus
+    {
+        get => _osmNameSuggestionStatus;
+        private set
+        {
+            if (SetField(ref _osmNameSuggestionStatus, value))
+                OnPropertyChanged(nameof(ShowTaxiNameSuggestionPanel));
+        }
+    }
+
+    public bool ShowTaxiNameSuggestionPanel => OsmNameSuggestionStatus != null;
+
+    // A work list: rows are removed one at a time (RemoveTaxiNameSuggestion)
+    // and stay after Apply, so it's an ObservableCollection edited in place
+    // rather than a list replaced wholesale — the grid keeps its scroll
+    // position and selection. Only ever changed through
+    // SetTaxiNameSuggestions/RemoveTaxiNameSuggestion, which keep the row
+    // subscriptions in step.
+    public ObservableCollection<TaxiNameSuggestionViewModel> TaxiNameSuggestions { get; } = [];
+
+    private void SetTaxiNameSuggestions(IEnumerable<TaxiNameSuggestionViewModel> rows)
+    {
+        foreach (var s in TaxiNameSuggestions) s.PropertyChanged -= OnTaxiNameSuggestionChanged;
+        TaxiNameSuggestions.Clear();
+        foreach (var s in rows)
+        {
+            s.PropertyChanged += OnTaxiNameSuggestionChanged;
+            TaxiNameSuggestions.Add(s);
+        }
+        OnTaxiNameSuggestionsChanged();
+    }
+
+    private void OnTaxiNameSuggestionsChanged()
+    {
+        OnPropertyChanged(nameof(HasTaxiNameSuggestions));
+        ApplyTaxiNameSuggestionsCommand?.RaiseCanExecuteChanged();
+    }
+
+    public bool HasTaxiNameSuggestions => TaxiNameSuggestions.Count > 0;
+
+    private void OnTaxiNameSuggestionChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(TaxiNameSuggestionViewModel.IsAccepted))
+            ApplyTaxiNameSuggestionsCommand.RaiseCanExecuteChanged();
+    }
+
+    // Ticking/unticking one of several selected rows in the review list does
+    // the same to every selected row, so a long list can be accepted in one
+    // go (e.g. Ctrl+A, then one tick) — called from MainWindow's code-behind,
+    // which knows the grid's selection. Applied rows ignore it (see
+    // TaxiNameSuggestionViewModel.IsAccepted).
+    public void SetTaxiNameSuggestionsAccepted(IEnumerable<TaxiNameSuggestionViewModel> rows, bool accepted)
+    {
+        foreach (var row in rows)
+            row.IsAccepted = accepted;
+    }
+
+    // Keeps the work list truthful when a path's name changes some other way
+    // — the Taxi Paths grid, the batch-edit popover, renaming or deleting a
+    // Taxi Name: each row's Current follows its path, and a row whose path
+    // now has the suggested name counts as applied (or stops counting, if
+    // the name was changed away again). See UpdateCurrentName.
+    private void RefreshSuggestionCurrentNames()
+    {
+        foreach (var row in TaxiNameSuggestions)
+            if (row.PathIndex < TaxiPathEdits.Count)
+                row.UpdateCurrentName(ResolveTaxiNameValue(TaxiPathEdits[row.PathIndex].TaxiNameId));
+    }
 
     // Raised after AddTaxiNameCommand appends a new (blank) name, so the view
     // can scroll the Taxi Names grid to it and put the cursor straight into
@@ -489,7 +578,7 @@ public class MainViewModel : ViewModelBase
     // future dedicated UI (e.g. a button) to bind to directly.
     public RelayCommand DeleteSelectedCommand { get; }
 
-    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null, IUpdateService? updateService = null)
+    public MainViewModel(ISimConnectService simConnect, IDebugDataStore? debugDataStore = null, IFileDialogService? fileDialogService = null, IAirportProjectStore? projectStore = null, IAirportXmlExporter? xmlExporter = null, IMapTileService? mapTileService = null, IConfirmationService? confirmationService = null, IUpdateService? updateService = null, IOsmTaxiwaySource? osmTaxiwaySource = null)
     {
         _simConnect = simConnect;
         _debugDataStore = debugDataStore;
@@ -498,6 +587,7 @@ public class MainViewModel : ViewModelBase
         _xmlExporter = xmlExporter;
         _mapTileService = mapTileService;
         _confirmationService = confirmationService;
+        _osmTaxiwaySource = osmTaxiwaySource;
         Updates = updateService == null ? null : new UpdateViewModel(updateService);
         TaxiNamesPicker = new ReadOnlyObservableCollection<TaxiNameEditViewModel>(TaxiNames);
         _simConnect.ConnectionChanged += (_, _) => OnPropertyChanged(nameof(IsConnected));
@@ -510,6 +600,10 @@ public class MainViewModel : ViewModelBase
         DismissXmlExportWarningsCommand = new RelayCommand(DismissXmlExportWarnings, () => ShowXmlExportWarnings);
         AddTaxiNameCommand = new RelayCommand(AddTaxiName, () => Airport != null);
         DeleteTaxiNameCommand = new RelayCommand<TaxiNameEditViewModel>(DeleteTaxiName, name => name != null);
+        SuggestTaxiNamesFromOsmCommand = new AsyncRelayCommand(SuggestTaxiNamesFromOsmAsync, () => _osmTaxiwaySource != null && Airport != null);
+        ApplyTaxiNameSuggestionsCommand = new RelayCommand(ApplyTaxiNameSuggestions, () => TaxiNameSuggestions.Any(s => s.IsAccepted));
+        DismissTaxiNameSuggestionsCommand = new RelayCommand(DismissTaxiNameSuggestions);
+        RemoveTaxiNameSuggestionCommand = new RelayCommand<TaxiNameSuggestionViewModel>(RemoveTaxiNameSuggestion, row => row != null);
         ToggleTaxiwaySelectionCommand = new RelayCommand<TaxiwaySelectionRequest>(ToggleTaxiwaySelection, request => request != null);
         ToggleTaxiwayPointSelectionCommand = new RelayCommand<TaxiwayPointSelectionRequest>(ToggleTaxiwayPointSelection, request => request != null);
         ClearTaxiwaySelectionCommand = new RelayCommand(ClearTaxiwaySelection, () => Diagram != null);
@@ -592,6 +686,7 @@ public class MainViewModel : ViewModelBase
         }
         SelectedRunwayEdit = null;
         OnPropertyChanged(nameof(DeleteAllTaxiwaySigns));
+        DismissTaxiNameSuggestions();
         _taxiwayPointSelectionOrder.Clear();
         _taxiPathSelectionFromPoints = false;
 
@@ -618,6 +713,7 @@ public class MainViewModel : ViewModelBase
         SaveProjectCommand.RaiseCanExecuteChanged();
         ExportXmlCommand.RaiseCanExecuteChanged();
         AddTaxiNameCommand.RaiseCanExecuteChanged();
+        SuggestTaxiNamesFromOsmCommand.RaiseCanExecuteChanged();
         ClearTaxiwaySelectionCommand.RaiseCanExecuteChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
         PlaceParkingCommand.RaiseCanExecuteChanged();
@@ -1153,6 +1249,7 @@ public class MainViewModel : ViewModelBase
         {
             case nameof(TaxiPathEditViewModel.TaxiNameId):
                 RefreshAllTaxiwayLabels();
+                RefreshSuggestionCurrentNames();
                 break;
             case nameof(TaxiPathEditViewModel.IsHiddenFromDiagram):
                 RefreshAllTaxiwayVisibility();
@@ -1176,6 +1273,7 @@ public class MainViewModel : ViewModelBase
         if (e.PropertyName != nameof(TaxiNameEditViewModel.Value)) return;
 
         RefreshAllTaxiwayLabels();
+        RefreshSuggestionCurrentNames();
         // A Name filter matches the resolved display value, not TaxiNameId
         // itself — renaming the entry a filtered-in path points at can change
         // whether it still matches.
@@ -1438,6 +1536,133 @@ public class MainViewModel : ViewModelBase
         // exists.
         foreach (var edit in TaxiPathEdits)
             edit.ClearTaxiNameIfReferencing(name.Id);
+    }
+
+    // Suggestions only need to cover the airport's own taxi network: the
+    // search radius reaches the farthest taxi path end from the airport's
+    // reference point, plus a margin, within sane bounds.
+    private const double OsmSearchMarginMeters = 300;
+    private const double OsmSearchMinRadiusMeters = 1000;
+    private const double OsmSearchMaxRadiusMeters = 8000;
+
+    private async Task SuggestTaxiNamesFromOsmAsync()
+    {
+        if (_osmTaxiwaySource is null || Airport is null) return;
+
+        var airport = Airport;
+        var farthest = airport.TaxiPaths
+            .SelectMany(p => new[] { (p.StartXMeters, p.StartZMeters), (p.EndXMeters, p.EndZMeters) })
+            .Where(p => p.Item1 is not null && p.Item2 is not null)
+            .Select(p => Math.Sqrt(p.Item1!.Value * p.Item1.Value + p.Item2!.Value * p.Item2.Value))
+            .DefaultIfEmpty(0)
+            .Max();
+        var radius = Math.Clamp(farthest + OsmSearchMarginMeters, OsmSearchMinRadiusMeters, OsmSearchMaxRadiusMeters);
+
+        DismissTaxiNameSuggestions();
+        var session = _osmSuggestionSession;
+        OsmNameSuggestionStatus = "Fetching taxiway names from OpenStreetMap…";
+        IsFetchingOsmNames = true;
+        OsmTaxiwayFetchResult result;
+        try
+        {
+            result = await _osmTaxiwaySource.FetchTaxiwaysAsync(airport.Latitude, airport.Longitude, radius, CancellationToken.None);
+        }
+        finally
+        {
+            IsFetchingOsmNames = false;
+        }
+
+        // The airport was (re)loaded while the request ran — e.g. another
+        // airport, or a delete rebuilding the path list — so path indexes may
+        // no longer line up. SetAirport already closed the panel.
+        if (session != _osmSuggestionSession) return;
+
+        if (result.Taxiways is not { } taxiways)
+        {
+            OsmNameSuggestionStatus = result.Error ?? "Could not fetch taxiway names from OpenStreetMap.";
+            return;
+        }
+
+        var suggestions = TaxiwayNameSuggester.Suggest(airport, taxiways, ResolveTaxiNameValue);
+        SetTaxiNameSuggestions(suggestions
+            .Where(s => s.PathIndex < TaxiPathEdits.Count)
+            .Select(s =>
+            {
+                var edit = TaxiPathEdits[s.PathIndex];
+                return new TaxiNameSuggestionViewModel(s.PathIndex, edit.StartIndex, edit.EndIndex, ResolveTaxiNameValue(edit.TaxiNameId), s.Name);
+            }));
+
+        var named = taxiways.Count(t => t.Name != null);
+        _osmSuggestionSummary = suggestions.Count == 0
+            ? $"Found {taxiways.Count} OSM taxiways ({named} named), but no suggestions — no named OSM taxiway runs along a path that doesn't already have that name."
+            : $"Found {taxiways.Count} OSM taxiways ({named} named): {suggestions.Count} suggestion(s). Paths already named are listed unticked.";
+        OsmNameSuggestionStatus = _osmSuggestionSummary;
+    }
+
+    // The fetch's summary line, kept so Apply can add its own count to it.
+    private string _osmSuggestionSummary = string.Empty;
+
+    // Names every accepted row's path — the same TaxiNameId change as picking
+    // a name in the Taxi Paths grid, so the grid and the diagram label update
+    // immediately (OnTaxiPathEditChanged). A suggested text reuses an existing
+    // Taxi Name with the same text (case-insensitive), otherwise one new Taxi
+    // Name is created per distinct text and shared by all its paths. The
+    // list stays open (a work list): applied rows are marked done, not
+    // removed.
+    private void ApplyTaxiNameSuggestions()
+    {
+        if (Airport is null) return;
+
+        var applied = 0;
+        foreach (var suggestion in TaxiNameSuggestions.Where(s => s.IsAccepted).ToList())
+        {
+            if (suggestion.PathIndex >= TaxiPathEdits.Count) continue;
+
+            var nameEdit = TaxiNames.FirstOrDefault(n => string.Equals(n.Value, suggestion.SuggestedName, StringComparison.OrdinalIgnoreCase));
+            if (nameEdit is null)
+            {
+                var name = new TaxiName { Value = suggestion.SuggestedName };
+                Airport.TaxiNames.Add(name);
+                nameEdit = new TaxiNameEditViewModel(name);
+                nameEdit.PropertyChanged += OnTaxiNameEditChanged;
+                TaxiNames.Add(nameEdit);
+            }
+            TaxiPathEdits[suggestion.PathIndex].TaxiNameId = nameEdit.Id;
+            suggestion.UpdateCurrentName(nameEdit.Value);
+            applied++;
+        }
+
+        OsmNameSuggestionStatus = $"{_osmSuggestionSummary} Applied {applied} name(s).";
+        ApplyTaxiNameSuggestionsCommand.RaiseCanExecuteChanged();
+    }
+
+    // Drops one row from the work list (e.g. a wrong suggestion), without
+    // changing anything else. If that path is part of the list's diagram
+    // highlight, it's taken out of the highlight too.
+    private void RemoveTaxiNameSuggestion(TaxiNameSuggestionViewModel? row)
+    {
+        if (row is null || !TaxiNameSuggestions.Remove(row)) return;
+        row.PropertyChanged -= OnTaxiNameSuggestionChanged;
+        OnTaxiNameSuggestionsChanged();
+
+        if (_suggestionHighlight.Remove(row.PathIndex) && Diagram != null &&
+            Diagram.TaxiwaySegments.FirstOrDefault(s => s.SourceIndex == row.PathIndex) is { IsSelected: true } shape &&
+            !ShowTaxiwayBatchEditPopover)
+        {
+            shape.IsSelected = false;
+        }
+    }
+
+    // Bumped on every dismiss (including SetAirport's), so a fetch still in
+    // flight can tell its results are stale.
+    private int _osmSuggestionSession;
+
+    private void DismissTaxiNameSuggestions()
+    {
+        _osmSuggestionSession++;
+        ClearSuggestionHighlight();
+        SetTaxiNameSuggestions([]);
+        OsmNameSuggestionStatus = null;
     }
 
     private void ToggleTaxiwaySelection(TaxiwaySelectionRequest? request)
@@ -1743,6 +1968,45 @@ public class MainViewModel : ViewModelBase
             if (shape.IsSelected != isSelected) _taxiPathSelectionFromPoints = false;
             shape.IsSelected = isSelected;
         }
+    }
+
+    // Called from MainWindow's code-behind when rows are selected in the
+    // "Suggest Names from OSM" review list: highlights those rows' paths on
+    // the diagram via the ordinary taxiway selection (so right-click batch
+    // edit works on them too), without filtering the Taxi Paths grid — same
+    // as selecting rows in that grid (SyncTaxiwaySelectionFromRows).
+    public void HighlightTaxiNameSuggestions(IEnumerable<TaxiNameSuggestionViewModel> selectedRows)
+    {
+        if (Diagram is null || ShowTaxiwayBatchEditPopover) return;
+
+        var paths = selectedRows.Select(s => s.PathIndex).Where(i => i < TaxiPathEdits.Count).Select(i => TaxiPathEdits[i]);
+        SyncTaxiwaySelectionFromRows(paths);
+        _suggestionHighlight = SelectedTaxiwayShapes.Select(s => s.SourceIndex).ToHashSet();
+
+        // On a large airport a highlighted path is hard to spot, so also
+        // zoom the diagram to it.
+        if (DiagramBounds.Around(SelectedTaxiwayShapes.SelectMany(s => s.WidthCorners.Append(s.Start).Append(s.End))) is { } bounds)
+            ZoomToDiagramBoundsRequested?.Invoke(this, bounds);
+    }
+
+    // Asks the Edit tab's diagram to zoom to an area (handled in MainWindow,
+    // since zoom/pan is the diagram control's own view state).
+    public event EventHandler<DiagramBounds>? ZoomToDiagramBoundsRequested;
+
+    // The path selection HighlightTaxiNameSuggestions last made, so closing
+    // the review list can clear it — but only if the user hasn't changed the
+    // selection since (never wipe out a selection they made themselves).
+    private HashSet<int> _suggestionHighlight = [];
+
+    private void ClearSuggestionHighlight()
+    {
+        if (_suggestionHighlight.Count > 0 && Diagram != null &&
+            SelectedTaxiwayShapes.Select(s => s.SourceIndex).ToHashSet().SetEquals(_suggestionHighlight))
+        {
+            foreach (var shape in SelectedTaxiwayShapes.ToList())
+                shape.IsSelected = false;
+        }
+        _suggestionHighlight = [];
     }
 
     private void ApplyTaxiwayBatchEdit()

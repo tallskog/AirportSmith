@@ -257,8 +257,82 @@
                                     </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
-                            <Button Content="Add Name" HorizontalAlignment="Left" Margin="0,0,0,14" Padding="10,2"
-                                    Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <Button Content="Add Name" Padding="10,2"
+                                        Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <!-- One Overpass request per click, never automatic — see
+                                     MainViewModel.SuggestTaxiNamesFromOsmAsync/TaxiwayNameSuggester. -->
+                                <Button Content="Suggest Names from OSM" Margin="10,0,0,0" Padding="10,2"
+                                        ToolTip="Downloads this airport's taxiways from OpenStreetMap and suggests names for the taxi paths that run along a named one. You review the suggestions before anything changes."
+                                        Command="{Binding DataContext.SuggestTaxiNamesFromOsmCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Visibility="{Binding DataContext.IsOsmNameSuggestionAvailable, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"/>
+                            </StackPanel>
+
+                            <!-- Review list for "Suggest Names from OSM": nothing changes until
+                                 Apply Accepted. Accept starts ticked only for unnamed paths. -->
+                            <Border Margin="0,-6,0,14" Padding="8" BorderBrush="#FFB0B0B0" BorderThickness="1" Background="#FFF7F7F7"
+                                    Visibility="{Binding DataContext.ShowTaxiNameSuggestionPanel, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                                <StackPanel>
+                                    <TextBlock TextWrapping="Wrap" Text="{Binding DataContext.OsmNameSuggestionStatus, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                    <ProgressBar Height="4" Margin="0,4,0,0" IsIndeterminate="True"
+                                                 Visibility="{Binding DataContext.IsFetchingOsmNames, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"/>
+                                    <!-- Selecting rows highlights their paths on the diagram
+                                         (MainViewModel.HighlightTaxiNameSuggestions). -->
+                                    <DataGrid Margin="0,6,0,0" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                              HeadersVisibility="Column" SelectionMode="Extended" SelectionUnit="FullRow"
+                                              x:Name="TaxiNameSuggestionsGrid" SelectionChanged="TaxiNameSuggestionsGrid_SelectionChanged"
+                                              ItemsSource="{Binding DataContext.TaxiNameSuggestions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              Visibility="{Binding DataContext.HasTaxiNameSuggestions, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                                        <DataGrid.Columns>
+                                            <!-- Real CheckBox in CellTemplate (not DataGridCheckBoxColumn) so it
+                                                 toggles on the first click — same as the other grids here. -->
+                                            <DataGridTemplateColumn Header="Accept" Width="Auto">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox HorizontalAlignment="Center" IsChecked="{Binding IsAccepted, UpdateSourceTrigger=PropertyChanged}"
+                                                                  IsEnabled="{Binding CanAccept}"
+                                                                  PreviewMouseLeftButtonDown="SuggestionAccept_PreviewMouseLeftButtonDown"
+                                                                  Click="SuggestionAccept_Click"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="Start" Binding="{Binding StartIndex}" IsReadOnly="True"/>
+                                            <DataGridTextColumn Header="End" Binding="{Binding EndIndex}" IsReadOnly="True"/>
+                                            <DataGridTextColumn Header="Current" Binding="{Binding CurrentName}" IsReadOnly="True"/>
+                                            <DataGridTextColumn Header="Suggested" Binding="{Binding SuggestedName}" IsReadOnly="True" FontWeight="Bold" Width="*"/>
+                                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" IsReadOnly="True"/>
+                                            <!-- Takes a wrong suggestion (or a done one) off the work list. -->
+                                            <DataGridTemplateColumn Width="Auto">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Content="Remove" Padding="6,1"
+                                                                Command="{Binding DataContext.RemoveTaxiNameSuggestionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                        <!-- Applied rows stay in the list as done, greyed out. -->
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsApplied}" Value="True">
+                                                        <Setter Property="Foreground" Value="Gray"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                    </DataGrid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                        <Button Content="Apply Accepted" Padding="10,2"
+                                                Command="{Binding DataContext.ApplyTaxiNameSuggestionsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Visibility="{Binding DataContext.HasTaxiNameSuggestions, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"/>
+                                        <Button Content="Dismiss" Margin="10,0,0,0" Padding="10,2"
+                                                Command="{Binding DataContext.DismissTaxiNameSuggestionsCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                    </StackPanel>
+                                    <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="Gray" Text="Taxiway names © OpenStreetMap contributors (ODbL)"/>
+                                </StackPanel>
+                            </Border>
 
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <TextBlock Text="Taxi Paths" FontWeight="Bold" VerticalAlignment="Center"/>
@@ -856,7 +930,7 @@
                     </ScrollViewer>
 
                     <Grid Grid.Column="1" x:Name="EditDiagramHost">
-                        <controls:AirportDiagramView
+                        <controls:AirportDiagramView x:Name="EditDiagramView"
                             DataContext="{Binding DataContext.Diagram, RelativeSource={RelativeSource AncestorType=Window}}"
                             MapTileService="{Binding DataContext.MapTileService, RelativeSource={RelativeSource AncestorType=Window}}"
                             ShowMap="{Binding DataContext.ShowMap, RelativeSource={RelativeSource AncestorType=Window}}"

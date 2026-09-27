@@ -3069,3 +3069,157 @@ reset. No schema version bump is needed.
 - `MainViewModelTests.DeleteAllTaxiwaySigns_ReflectsAndWritesTheLoadedAirport`
   and `DeleteAllTaxiwaySigns_NoAirportLoaded_IsFalseAndIgnoresWrites`.
 - Checkbox rendering is verified manually.
+
+## New feature: suggest taxiway names from OpenStreetMap (2026-09-27)
+
+**User story:** as a user naming taxiways, I want AirportSmith to suggest
+names from OpenStreetMap. Then I only need to review the suggestions and add
+whatever is missing, instead of naming every path by hand. The list doesn't
+have to be complete.
+
+**Background (checked 2026-09-27):** the background map's raster tiles only
+contain the names as pixels. OSM's underlying data has taxiways as
+`aeroway=taxiway` ways, with the name usually in `ref` (occasionally in
+`name`). A single Overpass API query returns them with their geometry. For
+OIBK, a real query returned 74 taxiway ways, of which 17 are named (A,
+A1-A8, B1-B8, C4, C5, M). Coverage varies by airport, so suggestions are
+partial by design.
+
+**Acceptance criteria:**
+- The Edit tab's Taxi Names panel has a **Suggest Names from OSM** button,
+  enabled while an airport is loaded and no fetch is running.
+- It is user-triggered only: one Overpass request per click, never
+  automatic. It uses the same identifying User-Agent as the map tiles.
+- While the request runs, a "Fetching taxiway names from OpenStreetMap…"
+  status is shown and the button is disabled, so it doesn't look hung. A
+  failure (network error, timeout, server error) is shown as a message,
+  never as a crash.
+- Matching (`TaxiwayNameSuggester`, pure):
+  - OSM ways are projected into the airport's local-meters plane with the
+    same `GeoProjection` as everything else.
+  - Only Taxi- and Path-type taxi paths get suggestions (not Runway or
+    Parking), and only ones with both ends resolved.
+  - A path matches the nearest OSM taxiway way whose line runs within 20 m
+    on average (30 m at worst) along the path, and in roughly the same
+    direction (within 30°).
+  - If that nearest way has no `ref`/`name`, there is no suggestion. An
+    unnamed OSM way next to the path must not let a farther named one win.
+  - No suggestion is made when the path already has exactly that name.
+- The suggestions are shown in a review list: path Start/End, current name,
+  suggested name, and an Accept checkbox. Accept is pre-ticked when the path
+  is unnamed and unticked when it already has a different name, so existing
+  names are never overwritten without the user opting in.
+- **Apply Accepted** sets each accepted path's name. It reuses an existing
+  Taxi Name whose text matches exactly (case-insensitively), or creates one
+  new Taxi Name per distinct suggested text. (**Amended after first use:** the list stays open — see "Work list" below.)
+  **Dismiss** closes the list without changing anything.
+- The list shows a summary (how many OSM ways were found and how many were
+  named, and how many suggestions were made) and the credit "Taxiway names ©
+  OpenStreetMap contributors (ODbL)".
+
+**Out of scope for now:** choosing between alternative Overpass servers.
+
+**Added after first use — highlight suggestions on the diagram:**
+- Selecting one or more rows in the review list (Ctrl/Shift+click for
+  several) highlights those rows' paths on the diagram
+  (`MainViewModel.HighlightTaxiNameSuggestions`, called from
+  `MainWindow.TaxiNameSuggestionsGrid_SelectionChanged`).
+- This uses the ordinary taxiway selection, so right-click batch edit
+  applies to the highlighted paths too.
+- Like selecting rows in the Taxi Paths grid, it doesn't filter that grid,
+  and it is ignored while the batch-edit popover is open.
+- Closing the list (Apply Accepted, Dismiss, or reloading the airport) clears
+  the highlight, unless the user has changed the selection since, in which
+  case their selection is kept.
+- Covered by
+  `MainViewModelTests.HighlightTaxiNameSuggestions_SelectsTheirPathsOnTheDiagram_AndClosingClearsIt`
+  and `ClosingSuggestions_KeepsASelectionTheUserChangedSinceHighlighting`.
+- **Also zooms to it** (added after use on larger airports, where a
+  highlighted path was hard to find):
+  - Every highlight raises `MainViewModel.ZoomToDiagramBoundsRequested`
+    with the highlighted paths' bounding box (`DiagramBounds`).
+  - `MainWindow` passes it to the Edit tab diagram's
+    `AirportDiagramView.ZoomToBounds`, which centers the area with 15%
+    padding.
+  - The area is at least 250 m across, so a short path keeps its
+    surroundings in view.
+  - The zoom stays within the mouse wheel's zoom limits.
+  - After that the view behaves like a manual zoom: resizing the window
+    doesn't re-fit it.
+  - The bounds are covered by
+    `MainViewModelTests.HighlightTaxiNameSuggestions_RequestsZoomToTheHighlightedPaths`.
+    The zoom itself is verified manually.
+
+**Backwards compatibility:** no new persisted fields. Accepted suggestions
+are ordinary Taxi Name/`TaxiNameId` edits, saved as before.
+
+**Test coverage:**
+- `OverpassTaxiwaySourceTests`: parsing an Overpass JSON response (`ref`
+  preferred over `name`, unnamed ways kept, ways without geometry skipped).
+- `TaxiwayNameSuggesterTests`:
+  - a path along a named way gets its name;
+  - a nearer unnamed way wins, so there is no suggestion;
+  - a far way is ignored;
+  - a crossing way (wrong direction) is ignored;
+  - Runway and Parking paths are skipped;
+  - a path that already has the name is skipped.
+- `MainViewModelTests` with a fake source:
+  - suggestions are listed, with Accept pre-ticked only for unnamed paths;
+  - Apply reuses existing names and creates missing ones, once per text;
+  - Dismiss changes nothing;
+  - a fetch failure shows a message;
+  - the busy flag is true only during the fetch.
+- The network call itself and the UI are verified manually.
+- **Work list** (added after first use; replaces "Apply closes the list"):
+  - The suggestion list is a work list for checking suggestions one by one.
+  - **Apply Accepted** no longer closes the list. Applied rows stay, marked
+    **Applied** in a Status column and greyed out, with Current showing the
+    applied name. Their Accept checkbox is disabled, so they can't be
+    applied twice.
+  - Each row has a **Remove** button that takes it off the list without
+    changing anything, for a wrong suggestion or a finished one. A removed
+    row's path is also taken out of the diagram highlight.
+  - **Dismiss** still closes the whole list.
+  - Applying is the same `TaxiNameId` change as picking a name in the Taxi
+    Paths grid, so the grid's Name column and the diagram label and styling
+    update immediately.
+  - Covered by:
+    - `MainViewModelTests.ApplyTaxiNameSuggestions_ReusesExistingNames_AndCreatesMissingOnesOncePerText`
+      (updated: the list now stays open, with rows marked applied);
+    - `ApplyTaxiNameSuggestions_UpdatesTheDiagramLabelImmediately`;
+    - `AppliedRows_CannotBeAcceptedAgain_AndApplyIsDisabledUntilSomethingIsTicked`;
+    - `RemoveTaxiNameSuggestion_DropsJustThatRow_AndItsHighlight`.
+- **Accept a whole selection at once** (added after use on long lists):
+  - When several rows are selected (Ctrl/Shift+click, or Ctrl+A),
+    ticking or unticking the Accept box on one of them does the same to all
+    selected rows (`MainViewModel.SetTaxiNameSuggestionsAccepted`). Applied
+    rows are skipped.
+  - Ticking a row outside the selection changes only that row.
+  - Both mouse clicks and Space on a focused checkbox work.
+  - WPF detail: a `DataGridCell` reselects its row on any mouse-down inside
+    it, even one the checkbox handled. That collapses a multi-row selection
+    before the checkbox's Click fires. So `MainWindow` captures the
+    selection on `PreviewMouseLeftButtonDown`, then applies the tick to that
+    group and restores the selection on Click.
+  - Covered by
+    `MainViewModelTests.SetTaxiNameSuggestionsAccepted_TicksAndUnticksTheWholeGroup_SkippingAppliedRows`.
+    The click and selection handling is verified manually.
+- **Work list follows manual naming** (added after use):
+  - Whenever a listed path's name changes outside the list, its row's
+    Current column updates (`MainViewModel.RefreshSuggestionCurrentNames`,
+    run on every `TaxiNameId` change and every Taxi Name rename). Such
+    changes come from:
+    - the Taxi Paths grid's Name picker;
+    - the batch-edit popover;
+    - renaming a Taxi Name;
+    - deleting a Taxi Name.
+  - Status is always derived from the current name
+    (`TaxiNameSuggestionViewModel.UpdateCurrentName`). A row is **Applied**
+    exactly when its path's name equals the suggestion (case-insensitive),
+    and its Accept box is then unticked and disabled.
+  - Changing an applied path's name away again makes the row not applied
+    and acceptable again, left unticked, so the status never claims
+    something that is no longer true.
+  - Covered by
+    `MainViewModelTests.ManuallyNamingAListedPath_UpdatesItsRow_AndTheSuggestedNameMarksItApplied`
+    and `RenamingOrDeletingATaxiName_UpdatesTheRowsOfPathsUsingIt`.

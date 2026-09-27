@@ -526,6 +526,313 @@ public class MainViewModelTests
         Assert.Equal(airport.TaxiNames[0].Id, vm.TaxiNames[0].Id);
     }
 
+    // --- Suggest taxi names from OSM ---
+
+    // Two parallel Taxi paths 50 m apart: path 0 unnamed, path 1 named "OLD".
+    // OSM has "A" along path 0 and "B" along path 1.
+    private static (MainViewModel Vm, FakeOsmTaxiwaySource Osm) CreateViewModelForOsmSuggestions(out TaxiName oldName)
+    {
+        oldName = new TaxiName { Value = "OLD" };
+        var airport = new AirportDetails { Icao = "EFHK", Latitude = 60.3172, Longitude = 24.9633 };
+        airport.TaxiNames.Add(oldName);
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 0, EndIndex = 1,
+            StartXMeters = 0, StartZMeters = 0, EndXMeters = 100, EndZMeters = 0,
+        });
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = 2, EndIndex = 3, TaxiNameId = oldName.Id,
+            StartXMeters = 0, StartZMeters = 50, EndXMeters = 100, EndZMeters = 50,
+        });
+
+        OsmTaxiway Way(string name, double z) => new(name,
+            [GeoProjection.UnprojectLocalPoint(airport.Latitude, airport.Longitude, -50, z),
+             GeoProjection.UnprojectLocalPoint(airport.Latitude, airport.Longitude, 200, z)]);
+        var osm = new FakeOsmTaxiwaySource { Result = new([Way("A", 0), Way("B", 50)], null) };
+
+        var store = new FakeAirportProjectStore();
+        store.Save(airport);
+        var vm = new MainViewModel(new FakeSimConnectService(), projectStore: store, osmTaxiwaySource: osm) { IcaoInput = "EFHK" };
+        vm.LoadProjectCommand.Execute(null);
+        return (vm, osm);
+    }
+
+    [Fact]
+    public void SuggestTaxiNamesFromOsm_ListsSuggestions_AcceptTickedOnlyForUnnamedPaths()
+    {
+        var (vm, osm) = CreateViewModelForOsmSuggestions(out _);
+
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        Assert.Equal(1, osm.CallCount);
+        Assert.True(vm.ShowTaxiNameSuggestionPanel);
+        Assert.Collection(vm.TaxiNameSuggestions,
+            s => { Assert.Equal(0, s.PathIndex); Assert.Equal("A", s.SuggestedName); Assert.Equal("", s.CurrentName); Assert.True(s.IsAccepted); },
+            s => { Assert.Equal(1, s.PathIndex); Assert.Equal("B", s.SuggestedName); Assert.Equal("OLD", s.CurrentName); Assert.False(s.IsAccepted); });
+        // Nothing changes before Apply.
+        Assert.Null(vm.TaxiPathEdits[0].TaxiNameId);
+    }
+
+    [Fact]
+    public void ApplyTaxiNameSuggestions_ReusesExistingNames_AndCreatesMissingOnesOncePerText()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out var oldName);
+        vm.AddTaxiNameCommand.Execute(null);
+        vm.TaxiNames[^1].Value = "a"; // existing name, differently cased
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        vm.TaxiNameSuggestions[1].IsAccepted = true;
+
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+
+        var existingA = vm.TaxiNames.Single(n => n.Value == "a");
+        Assert.Equal(existingA.Id, vm.TaxiPathEdits[0].TaxiNameId);
+        var newB = Assert.Single(vm.TaxiNames, n => n.Value == "B");
+        Assert.Equal(newB.Id, vm.TaxiPathEdits[1].TaxiNameId);
+        Assert.Contains(vm.Airport!.TaxiNames, n => n.Id == newB.Id);
+        Assert.Contains(vm.TaxiNames, n => n.Id == oldName.Id); // old name kept, just no longer used here
+        // A work list: it stays open, with the applied rows marked done.
+        Assert.True(vm.ShowTaxiNameSuggestionPanel);
+        Assert.All(vm.TaxiNameSuggestions, s => { Assert.True(s.IsApplied); Assert.False(s.IsAccepted); });
+        Assert.Equal("a", vm.TaxiNameSuggestions[0].CurrentName);
+        Assert.Equal("B", vm.TaxiNameSuggestions[1].CurrentName);
+    }
+
+    [Fact]
+    public void ApplyTaxiNameSuggestions_UpdatesTheDiagramLabelImmediately()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        var shape = vm.Diagram!.TaxiwaySegments.Single(s => s.SourceIndex == 0);
+        Assert.False(shape.HasName);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+
+        Assert.Equal("A", shape.Name);
+        Assert.True(shape.HasName);
+    }
+
+    [Fact]
+    public void AppliedRows_CannotBeAcceptedAgain_AndApplyIsDisabledUntilSomethingIsTicked()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+        var applied = vm.TaxiNameSuggestions[0];
+
+        applied.IsAccepted = true;
+
+        Assert.False(applied.IsAccepted);
+        Assert.False(applied.CanAccept);
+        Assert.False(vm.ApplyTaxiNameSuggestionsCommand.CanExecute(null));
+        vm.TaxiNameSuggestions[1].IsAccepted = true;
+        Assert.True(vm.ApplyTaxiNameSuggestionsCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void SetTaxiNameSuggestionsAccepted_TicksAndUnticksTheWholeGroup_SkippingAppliedRows()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        var rows = vm.TaxiNameSuggestions.ToList();
+        Assert.False(rows[1].IsAccepted);
+
+        vm.SetTaxiNameSuggestionsAccepted(rows, true);
+        Assert.All(rows, r => Assert.True(r.IsAccepted));
+
+        vm.SetTaxiNameSuggestionsAccepted(rows, false);
+        Assert.All(rows, r => Assert.False(r.IsAccepted));
+        Assert.False(vm.ApplyTaxiNameSuggestionsCommand.CanExecute(null));
+
+        vm.SetTaxiNameSuggestionsAccepted([rows[0]], true);
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+        vm.SetTaxiNameSuggestionsAccepted(rows, true);
+        Assert.False(rows[0].IsAccepted); // applied, can't be re-accepted
+        Assert.True(rows[1].IsAccepted);
+    }
+
+    // Naming a listed path by hand (here: the Taxi Paths grid's Name picker,
+    // i.e. TaxiNameId) updates its row; the suggested name makes it applied.
+    [Fact]
+    public void ManuallyNamingAListedPath_UpdatesItsRow_AndTheSuggestedNameMarksItApplied()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out var oldName);
+        vm.AddTaxiNameCommand.Execute(null);
+        var other = vm.TaxiNames[^1];
+        other.Value = "Z";
+        vm.AddTaxiNameCommand.Execute(null);
+        var a = vm.TaxiNames[^1];
+        a.Value = "a";
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        var row0 = vm.TaxiNameSuggestions[0];
+
+        vm.TaxiPathEdits[0].TaxiNameId = other.Id;
+        Assert.Equal("Z", row0.CurrentName);
+        Assert.False(row0.IsApplied);
+        Assert.True(row0.IsAccepted); // still ticked — not the suggested name
+
+        vm.TaxiPathEdits[0].TaxiNameId = a.Id; // "a" == suggested "A"
+        Assert.Equal("a", row0.CurrentName);
+        Assert.True(row0.IsApplied);
+        Assert.False(row0.IsAccepted);
+
+        // Changing it away again: no longer applied, can be accepted again.
+        vm.TaxiPathEdits[0].TaxiNameId = oldName.Id;
+        Assert.Equal("OLD", row0.CurrentName);
+        Assert.False(row0.IsApplied);
+        Assert.True(row0.CanAccept);
+    }
+
+    [Fact]
+    public void RenamingOrDeletingATaxiName_UpdatesTheRowsOfPathsUsingIt()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out var oldName);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        var row1 = vm.TaxiNameSuggestions[1]; // path 1 is named "OLD", suggested "B"
+        var oldEdit = vm.TaxiNames.Single(n => n.Id == oldName.Id);
+
+        oldEdit.Value = "B";
+        Assert.Equal("B", row1.CurrentName);
+        Assert.True(row1.IsApplied);
+
+        vm.DeleteTaxiNameCommand.Execute(oldEdit);
+        Assert.Equal("", row1.CurrentName);
+        Assert.False(row1.IsApplied);
+    }
+
+    [Fact]
+    public void RemoveTaxiNameSuggestion_DropsJustThatRow_AndItsHighlight()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        var wrong = vm.TaxiNameSuggestions[0];
+        vm.HighlightTaxiNameSuggestions(vm.TaxiNameSuggestions);
+
+        vm.RemoveTaxiNameSuggestionCommand.Execute(wrong);
+
+        Assert.Equal(1, Assert.Single(vm.TaxiNameSuggestions).PathIndex);
+        Assert.Null(vm.TaxiPathEdits[0].TaxiNameId); // nothing applied
+        Assert.Equal([1], vm.Diagram!.TaxiwaySegments.Where(s => s.IsSelected).Select(s => s.SourceIndex));
+        Assert.True(vm.ShowTaxiNameSuggestionPanel);
+    }
+
+    [Fact]
+    public void ApplyTaxiNameSuggestions_UntickedRowsAreLeftAlone()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out var oldName);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+
+        Assert.Equal(oldName.Id, vm.TaxiPathEdits[1].TaxiNameId);
+        Assert.DoesNotContain(vm.TaxiNames, n => n.Value == "B");
+    }
+
+    [Fact]
+    public void DismissTaxiNameSuggestions_ChangesNothing()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        var namesBefore = vm.TaxiNames.Count;
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        vm.DismissTaxiNameSuggestionsCommand.Execute(null);
+
+        Assert.False(vm.ShowTaxiNameSuggestionPanel);
+        Assert.Empty(vm.TaxiNameSuggestions);
+        Assert.Null(vm.TaxiPathEdits[0].TaxiNameId);
+        Assert.Equal(namesBefore, vm.TaxiNames.Count);
+    }
+
+    [Fact]
+    public void SuggestTaxiNamesFromOsm_FetchFailure_ShowsTheError()
+    {
+        var (vm, osm) = CreateViewModelForOsmSuggestions(out _);
+        osm.Result = new OsmTaxiwayFetchResult(null, "server busy");
+
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        Assert.Equal("server busy", vm.OsmNameSuggestionStatus);
+        Assert.Empty(vm.TaxiNameSuggestions);
+    }
+
+    [Fact]
+    public void SuggestTaxiNamesFromOsm_IsBusyOnlyWhileFetching_AndDropsResultsIfTheAirportReloads()
+    {
+        var (vm, osm) = CreateViewModelForOsmSuggestions(out _);
+        osm.Pending = new TaskCompletionSource<OsmTaxiwayFetchResult>();
+
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        Assert.True(vm.IsFetchingOsmNames);
+        Assert.False(vm.SuggestTaxiNamesFromOsmCommand.CanExecute(null));
+
+        vm.LoadProjectCommand.Execute(null); // reload while the request runs
+        osm.Pending.SetResult(osm.Result);
+
+        Assert.False(vm.IsFetchingOsmNames);
+        Assert.Empty(vm.TaxiNameSuggestions);
+        Assert.False(vm.ShowTaxiNameSuggestionPanel);
+    }
+
+    [Fact]
+    public void HighlightTaxiNameSuggestions_SelectsTheirPathsOnTheDiagram_AndClosingClearsIt()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+
+        vm.HighlightTaxiNameSuggestions([vm.TaxiNameSuggestions[1]]);
+        Assert.Equal([1], vm.Diagram!.TaxiwaySegments.Where(s => s.IsSelected).Select(s => s.SourceIndex));
+        // Highlighting doesn't filter the Taxi Paths grid.
+        Assert.Equal(2, vm.VisibleTaxiPathEdits.Count);
+
+        vm.HighlightTaxiNameSuggestions(vm.TaxiNameSuggestions);
+        Assert.Equal(2, vm.Diagram.TaxiwaySegments.Count(s => s.IsSelected));
+
+        vm.DismissTaxiNameSuggestionsCommand.Execute(null);
+        Assert.DoesNotContain(vm.Diagram.TaxiwaySegments, s => s.IsSelected);
+    }
+
+    [Fact]
+    public void HighlightTaxiNameSuggestions_RequestsZoomToTheHighlightedPaths()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        var requests = new List<DiagramBounds>();
+        vm.ZoomToDiagramBoundsRequested += (_, b) => requests.Add(b);
+
+        vm.HighlightTaxiNameSuggestions([vm.TaxiNameSuggestions[0]]);
+
+        var bounds = Assert.Single(requests);
+        var path0 = vm.Diagram!.TaxiwaySegments.Single(s => s.SourceIndex == 0);
+        Assert.True(bounds.MinX <= Math.Min(path0.Start.X, path0.End.X) && bounds.MaxX >= Math.Max(path0.Start.X, path0.End.X));
+        Assert.True(bounds.MinY <= Math.Min(path0.Start.Y, path0.End.Y) && bounds.MaxY >= Math.Max(path0.Start.Y, path0.End.Y));
+        // Path 1 (50 m away) isn't part of this zoom area.
+        var path1 = vm.Diagram.TaxiwaySegments.Single(s => s.SourceIndex == 1);
+        Assert.False(path1.Start.Y >= bounds.MinY && path1.Start.Y <= bounds.MaxY);
+    }
+
+    [Fact]
+    public void ClosingSuggestions_KeepsASelectionTheUserChangedSinceHighlighting()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        vm.HighlightTaxiNameSuggestions([vm.TaxiNameSuggestions[1]]);
+
+        var path0 = vm.Diagram!.TaxiwaySegments.Single(s => s.SourceIndex == 0);
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(path0, ExtendSelection: false));
+        vm.DismissTaxiNameSuggestionsCommand.Execute(null);
+
+        Assert.True(path0.IsSelected);
+    }
+
+    [Fact]
+    public void SuggestTaxiNamesFromOsm_UnavailableWithoutASource()
+    {
+        var vm = CreateViewModelWithAirport(new AirportDetails { Icao = "EFHK" });
+
+        Assert.False(vm.IsOsmNameSuggestionAvailable);
+        Assert.False(vm.SuggestTaxiNamesFromOsmCommand.CanExecute(null));
+    }
+
     [Fact]
     public void DeleteAllTaxiwaySigns_ReflectsAndWritesTheLoadedAirport()
     {

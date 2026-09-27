@@ -10,6 +10,19 @@ namespace AirportSmith.Models.Diagram;
 // has zero WPF dependency and is testable as plain C#.
 public readonly record struct Point2D(double X, double Y);
 
+// An axis-aligned area of the diagram, in the same canvas space as Point2D —
+// what the Edit tab's diagram zooms to (see
+// MainViewModel.ZoomToDiagramBoundsRequested).
+public readonly record struct DiagramBounds(double MinX, double MinY, double MaxX, double MaxY)
+{
+    public static DiagramBounds? Around(IEnumerable<Point2D> points)
+    {
+        var list = points.ToList();
+        if (list.Count == 0) return null;
+        return new DiagramBounds(list.Min(p => p.X), list.Min(p => p.Y), list.Max(p => p.X), list.Max(p => p.Y));
+    }
+}
+
 // A displaced threshold's markings, per FAA AIM 2-3-3 (faa.gov/air_traffic/
 // publications/atpubs/aim/aim0203.html — see requirements.md's reference
 // list): WHITE throughout, since this pavement is still usable runway (just
