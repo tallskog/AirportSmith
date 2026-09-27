@@ -696,6 +696,23 @@ is. Pure XAML/rendering change, nothing in `MainViewModel` or below moved —
 not covered by automated tests, verified manually, same as the rest of this
 tab's WPF interaction.
 
+**Revised (2026-09-27) — Add Name didn't focus the new row, and the row
+being edited turned solid blue:** with a long Taxi Names list, clicking Add
+Name appended the blank row out of sight at the bottom, so the user had to
+scroll the whole list to find it. Also, clicking into a row highlighted it
+solid blue, because the grid's default selected-cell highlight showed through
+the Name box's transparent background. Fixed as follows:
+- `MainViewModel.TaxiNameAdded` fires only from `AddTaxiNameCommand`, never
+  from loading or syncing an airport. `MainWindow` handles it by scrolling the
+  grid to the new row and focusing its Name box, ready to type.
+- The Taxi Names grid's `CellStyle` keeps selected cells on the normal
+  background.
+
+Acceptance criteria: after Add Name, the new row is visible and has keyboard
+focus, and a selected or edited row is not highlighted. Covered by
+`MainViewModelTests.AddTaxiNameCommand_Execute_RaisesTaxiNameAddedWithTheNewRow`.
+The scroll/focus and the styling are WPF-only and are verified manually.
+
 **Revised (2026-09-14) — added taxi path type/runway-association/edge-type/
 center-line editing:** the Edit tab's Taxi Paths grid now also exposes, per
 row: `Type` (the sim's TAXI_PATH.TYPE, e.g. Taxi/Runway/Parking/Path/Closed/

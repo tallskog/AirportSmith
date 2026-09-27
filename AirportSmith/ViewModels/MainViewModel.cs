@@ -439,6 +439,13 @@ public class MainViewModel : ViewModelBase
     public RelayCommand DismissXmlExportWarningsCommand { get; }
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
+
+    // Raised after AddTaxiNameCommand appends a new (blank) name, so the view
+    // can scroll the Taxi Names grid to it and put the cursor straight into
+    // its Name box — with a long list, the new row otherwise lands out of
+    // sight at the bottom. Only raised by an explicit user add, never by
+    // SyncTaxiNames (loading an airport).
+    public event EventHandler<TaxiNameEditViewModel>? TaxiNameAdded;
     public RelayCommand<TaxiwaySelectionRequest> ToggleTaxiwaySelectionCommand { get; }
     public RelayCommand<TaxiwayPointSelectionRequest> ToggleTaxiwayPointSelectionCommand { get; }
     public RelayCommand ClearTaxiwaySelectionCommand { get; }
@@ -1394,6 +1401,7 @@ public class MainViewModel : ViewModelBase
         var nameEdit = new TaxiNameEditViewModel(name);
         nameEdit.PropertyChanged += OnTaxiNameEditChanged;
         TaxiNames.Add(nameEdit);
+        TaxiNameAdded?.Invoke(this, nameEdit);
     }
 
     private void DeleteTaxiName(TaxiNameEditViewModel? name)

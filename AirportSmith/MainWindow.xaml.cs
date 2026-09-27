@@ -2,6 +2,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
 using AirportSmith.ViewModels;
 
 namespace AirportSmith;
@@ -15,6 +16,34 @@ public partial class MainWindow : Window
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = _viewModel;
+        _viewModel.TaxiNameAdded += OnTaxiNameAdded;
+    }
+
+    // Scrolls the Taxi Names grid to a just-added name and puts the cursor in
+    // its Name box, so a long list doesn't have to be scrolled by hand to find
+    // the new (blank, bottom) row. The row container only exists after a
+    // layout pass, hence ScrollIntoView + UpdateLayout before looking it up.
+    private void OnTaxiNameAdded(object? sender, TaxiNameEditViewModel name)
+    {
+        TaxiNamesGrid.ScrollIntoView(name);
+        TaxiNamesGrid.UpdateLayout();
+        if (TaxiNamesGrid.ItemContainerGenerator.ContainerFromItem(name) is not DataGridRow row) return;
+
+        var textBox = FindDescendant<TextBox>(row);
+        if (textBox is null) return;
+        textBox.Focus();
+        textBox.SelectAll();
+    }
+
+    private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } nested) return nested;
+        }
+        return null;
     }
 
     // WPF's DataGrid has no bindable SelectedItems, so a code-behind handler

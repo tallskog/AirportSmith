@@ -193,8 +193,23 @@
                                  Renaming here is instantly reflected wherever that name is used
                                  (the diagram, the picker below) since both resolve it live by Id. -->
                             <TextBlock Text="Taxi Names" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <DataGrid Margin="0,0,0,4" MaxHeight="140" AutoGenerateColumns="False" CanUserAddRows="False"
+                            <DataGrid x:Name="TaxiNamesGrid" Margin="0,0,0,4" MaxHeight="140" AutoGenerateColumns="False" CanUserAddRows="False"
                                       ItemsSource="{Binding DataContext.TaxiNames, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <!-- Every cell here is an always-editable control, so the default
+                                     selected-row highlight only got in the way: it showed through the
+                                     Name box's transparent background and turned the row being typed
+                                     into solid blue. Selected cells keep the normal background. -->
+                                <DataGrid.CellStyle>
+                                    <Style TargetType="DataGridCell">
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="Transparent"/>
+                                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.CellStyle>
                                 <DataGrid.Columns>
                                     <!-- A single always-editable TextBox, not a CellTemplate/
                                          CellEditingTemplate split — a DataGridTemplateColumn's

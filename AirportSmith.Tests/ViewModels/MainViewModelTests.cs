@@ -526,6 +526,20 @@ public class MainViewModelTests
         Assert.Equal(airport.TaxiNames[0].Id, vm.TaxiNames[0].Id);
     }
 
+    // The view relies on this to scroll to and focus the new row.
+    [Fact]
+    public void AddTaxiNameCommand_Execute_RaisesTaxiNameAddedWithTheNewRow()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        var vm = CreateViewModelWithAirport(airport);
+        TaxiNameEditViewModel? added = null;
+        vm.TaxiNameAdded += (_, name) => added = name;
+
+        vm.AddTaxiNameCommand.Execute(null);
+
+        Assert.Same(vm.TaxiNames[^1], added);
+    }
+
     // Regression test for a real crash: TaxiNamesPicker must be a genuinely
     // separate collection INSTANCE from TaxiNames (not just an equivalent
     // one), even though it mirrors the same items live — see
