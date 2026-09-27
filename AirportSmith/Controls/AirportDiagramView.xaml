@@ -362,12 +362,16 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Path Stroke="Black" StrokeThickness="1"
+                        <!-- Radius/stroke come from the view, rescaled on every zoom so the
+                             marker keeps a constant, small on-screen size (see
+                             AirportDiagramView.UpdateScreenSizedMarkers). -->
+                        <Path Stroke="Black"
                               Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}"
                               MouseLeftButtonDown="TaxiwayPointShape_MouseLeftButtonDown">
                             <Path.Style>
                                 <Style TargetType="Path">
                                     <Setter Property="Fill" Value="Red"/>
+                                    <Setter Property="StrokeThickness" Value="{Binding TaxiwayPointStroke, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"/>
                                     <Style.Triggers>
                                         <!-- TaxiPointType.HoldShort/IlsHoldShort/*NoDraw variants (see
                                              AirportDiagramProjector.IsHoldShort) — a distinct color from
@@ -380,13 +384,15 @@
                                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                             <Setter Property="Fill" Value="Orange"/>
                                             <Setter Property="Stroke" Value="DarkOrange"/>
-                                            <Setter Property="StrokeThickness" Value="2"/>
+                                            <Setter Property="StrokeThickness" Value="{Binding TaxiwayPointSelectedStroke, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"/>
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Path.Style>
                             <Path.Data>
-                                <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}" RadiusX="9" RadiusY="9"/>
+                                <EllipseGeometry Center="{Binding Center, Converter={StaticResource Point2DToPoint}}"
+                                                 RadiusX="{Binding TaxiwayPointRadius, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"
+                                                 RadiusY="{Binding TaxiwayPointRadius, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"/>
                             </Path.Data>
                         </Path>
                     </DataTemplate>

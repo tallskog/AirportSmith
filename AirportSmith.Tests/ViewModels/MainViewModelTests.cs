@@ -1198,6 +1198,84 @@ public class MainViewModelTests
         Assert.All(vm.Diagram.TaxiwayPoints, p => Assert.False(p.IsSelected));
     }
 
+    // A square loop of Taxi paths 0-1-2-3-0 (paths 0..3), plus a Runway
+    // path straight across from point 0 to point 2 (path 4) — shorter than
+    // either half of the loop, so it would win if runways weren't excluded.
+    private static AirportDetails BuildAirportWithTaxiwayLoopAndRunwayShortcut()
+    {
+        var airport = new AirportDetails { Icao = "EFHK" };
+        (double X, double Z)[] corners = [(0, 0), (100, 0), (100, 100), (0, 100)];
+        for (var i = 0; i < 4; i++)
+        {
+            var (sx, sz) = corners[i];
+            var (ex, ez) = corners[(i + 1) % 4];
+            airport.TaxiPaths.Add(new TaxiPathSegment
+            {
+                Type = TaxiPathType.Taxi, WidthMeters = 10, StartIndex = i, EndIndex = (i + 1) % 4,
+                StartXMeters = sx, StartZMeters = sz, EndXMeters = ex, EndZMeters = ez,
+            });
+        }
+        airport.TaxiPaths.Add(new TaxiPathSegment
+        {
+            Type = TaxiPathType.Runway, WidthMeters = 10, StartIndex = 0, EndIndex = 2,
+            StartXMeters = 0, StartZMeters = 0, EndXMeters = 100, EndZMeters = 100,
+        });
+        return airport;
+    }
+
+    private static void SelectTaxiwayPoint(MainViewModel vm, int index, bool extend) =>
+        vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(
+            vm.Diagram!.TaxiwayPoints.Single(p => p.Index == index), extend));
+
+    private static HashSet<int> SelectedTaxiPathIndexes(MainViewModel vm) =>
+        vm.Diagram!.TaxiwaySegments.Where(s => s.IsSelected).Select(s => s.SourceIndex).ToHashSet();
+
+    [Fact]
+    public void SelectingTwoTaxiwayPoints_SelectsTheTaxiPathsBetweenThem_ButNeverARunway()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithTaxiwayLoopAndRunwayShortcut());
+
+        SelectTaxiwayPoint(vm, 0, extend: false);
+        Assert.Empty(SelectedTaxiPathIndexes(vm));
+
+        // Opposite corners: both halves of the loop, not the runway across.
+        SelectTaxiwayPoint(vm, 2, extend: true);
+        Assert.Equal(new HashSet<int> { 0, 1, 2, 3 }, SelectedTaxiPathIndexes(vm));
+        Assert.Equal(4, vm.VisibleTaxiPathEdits.Count);
+
+        // A third point on one half narrows it to that half.
+        SelectTaxiwayPoint(vm, 1, extend: true);
+        Assert.Equal(new HashSet<int> { 0, 1 }, SelectedTaxiPathIndexes(vm));
+    }
+
+    [Fact]
+    public void DroppingBelowTwoTaxiwayPoints_ClearsTheAutoSelectedPaths()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithTaxiwayLoopAndRunwayShortcut());
+        SelectTaxiwayPoint(vm, 0, extend: false);
+        SelectTaxiwayPoint(vm, 1, extend: true);
+        Assert.Equal(new HashSet<int> { 0 }, SelectedTaxiPathIndexes(vm));
+
+        SelectTaxiwayPoint(vm, 1, extend: true); // Ctrl+click again deselects
+
+        Assert.Empty(SelectedTaxiPathIndexes(vm));
+        Assert.Equal(5, vm.VisibleTaxiPathEdits.Count);
+    }
+
+    // A single point never had an auto-selection, so it must not wipe out a
+    // taxi path selection the user made by hand.
+    [Fact]
+    public void SelectingOneTaxiwayPoint_LeavesAManualTaxiPathSelectionAlone()
+    {
+        var vm = CreateViewModelWithAirport(BuildAirportWithTaxiwayLoopAndRunwayShortcut());
+        var path3 = vm.Diagram!.TaxiwaySegments.Single(s => s.SourceIndex == 3);
+        vm.ToggleTaxiwaySelectionCommand.Execute(new TaxiwaySelectionRequest(path3, ExtendSelection: false));
+
+        SelectTaxiwayPoint(vm, 0, extend: false);
+
+        Assert.Equal(new HashSet<int> { 3 }, SelectedTaxiPathIndexes(vm));
+    }
+
     [Fact]
     public void TogglingTaxiwayPointSelection_PlainClickReplacesSelection_CtrlClickToggles()
     {
@@ -2087,6 +2165,22 @@ public class MainViewModelTests
         vm.ToggleTaxiwayPointSelectionCommand.Execute(new TaxiwayPointSelectionRequest(point5, false));
 
         Assert.False(vm.DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
+    }
+
+    // Selecting 2+ points auto-selects the paths between them, but Delete
+    // must still act on the points the user actually selected.
+    [Fact]
+    public void DeleteSelectedCommand_PathsAutoSelectedFromPoints_DeletesThePoints()
+    {
+        var confirmation = new FakeConfirmationService();
+        var vm = CreateViewModelWithAirport(BuildAirportWithThreeTaxiwayPoints(), confirmation);
+        SelectTaxiwayPoint(vm, 0, extend: false);
+        SelectTaxiwayPoint(vm, 2, extend: true);
+        Assert.Equal(2, vm.Diagram!.TaxiwaySegments.Count(s => s.IsSelected));
+
+        vm.DeleteSelectedCommand.Execute(null);
+
+        Assert.StartsWith("Delete 2 taxiway points?", confirmation.LastMessage);
     }
 
     [Fact]

@@ -248,6 +248,7 @@ public class MainViewModel : ViewModelBase
                 if (value) shape.IsSelected = false;
             }
             RefreshTaxiwayPointFilter();
+            SelectTaxiwaySectionFromPoints();
         }
     }
 
@@ -576,6 +577,8 @@ public class MainViewModel : ViewModelBase
             RaiseParkingPlacementChanged();
         }
         SelectedRunwayEdit = null;
+        _taxiwayPointSelectionOrder.Clear();
+        _taxiPathSelectionFromPoints = false;
 
         // Skipped entirely when the Id set/order already matches — see
         // SyncTaxiNames's own doc comment for why unconditionally
@@ -856,10 +859,14 @@ public class MainViewModel : ViewModelBase
     // ToggleParkingSpotSelection's own doc comments — selecting one doesn't
     // clear the others), so more than one COULD be non-empty at once; this
     // order just needs to be deterministic, and parking spots already had
-    // the Delete key before the other two existed.
+    // the Delete key before the other two existed. Exception: when the taxi
+    // path selection was made automatically from the selected points (see
+    // SelectTaxiwaySectionFromPoints), the points are what the user actually
+    // selected, so they go before the paths.
     private void DeleteSelected()
     {
         if (DeleteSelectedParkingSpotsCommand.CanExecute(null)) DeleteSelectedParkingSpots();
+        else if (_taxiPathSelectionFromPoints && DeleteSelectedTaxiwayPointsCommand.CanExecute(null)) DeleteSelectedTaxiwayPoints();
         else if (DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null)) DeleteSelectedTaxiwaySegments();
         else if (DeleteSelectedTaxiwayPointsCommand.CanExecute(null)) DeleteSelectedTaxiwayPoints();
     }
@@ -1434,6 +1441,7 @@ public class MainViewModel : ViewModelBase
             request.Shape.IsSelected = !request.Shape.IsSelected;
         }
 
+        _taxiPathSelectionFromPoints = false;
         RefreshTaxiwayFilter();
     }
 
@@ -1459,7 +1467,59 @@ public class MainViewModel : ViewModelBase
             request.Shape.IsSelected = !request.Shape.IsSelected;
         }
 
+        if (!request.ExtendSelection) _taxiwayPointSelectionOrder.Clear();
+        _taxiwayPointSelectionOrder.Remove(request.Shape.Index);
+        if (request.Shape.IsSelected) _taxiwayPointSelectionOrder.Add(request.Shape.Index);
+
         RefreshTaxiwayPointFilter();
+        SelectTaxiwaySectionFromPoints();
+    }
+
+    // The order taxiway points were selected in (sim TAXI_POINT indices). The
+    // first two are the section's ends — see TaxiwaySectionFinder.
+    private readonly List<int> _taxiwayPointSelectionOrder = [];
+
+    // True while the taxi path selection is the one SelectTaxiwaySectionFromPoints
+    // made (not a manual path click/row selection), so a point selection
+    // dropping below 2 can clear it again, and Delete still means "delete
+    // the selected points" rather than the auto-selected paths.
+    private bool _taxiPathSelectionFromPoints;
+
+    // With 2+ taxiway points selected, replaces the taxi path selection with
+    // every path in the section between them (see TaxiwaySectionFinder for
+    // the route rules), so a stretch of taxiway can be batch-edited without
+    // clicking each path. Runway paths are never part of a section, and
+    // neither are parking paths (their end is a parking spot, not a taxi
+    // point) or paths hidden from the diagram (they can't be selected).
+    private void SelectTaxiwaySectionFromPoints()
+    {
+        if (Diagram is null) return;
+
+        var selectedPoints = Diagram.TaxiwayPoints.Where(p => p.IsSelected).Select(p => p.Index).ToHashSet();
+        var orderedPoints = _taxiwayPointSelectionOrder.Where(selectedPoints.Contains)
+            .Concat(selectedPoints.Where(p => !_taxiwayPointSelectionOrder.Contains(p)))
+            .ToList();
+
+        if (orderedPoints.Count < 2)
+        {
+            if (!_taxiPathSelectionFromPoints) return;
+            _taxiPathSelectionFromPoints = false;
+            foreach (var shape in Diagram.TaxiwaySegments)
+                shape.IsSelected = false;
+            RefreshTaxiwayFilter();
+            return;
+        }
+
+        var edges = Diagram.TaxiwaySegments
+            .Where(s => !s.IsRunwayType && !s.IsParkingType && s.IsVisible && s.SourceIndex < TaxiPathEdits.Count)
+            .Select(s => new TaxiwaySectionEdge(s.SourceIndex, TaxiPathEdits[s.SourceIndex].StartIndex, TaxiPathEdits[s.SourceIndex].EndIndex))
+            .ToList();
+        var section = TaxiwaySectionFinder.FindSection(edges, orderedPoints);
+
+        foreach (var shape in Diagram.TaxiwaySegments)
+            shape.IsSelected = section.Contains(shape.SourceIndex);
+        _taxiPathSelectionFromPoints = true;
+        RefreshTaxiwayFilter();
     }
 
     // Bound to a plain click (no drag) on empty diagram space — see
@@ -1479,6 +1539,8 @@ public class MainViewModel : ViewModelBase
             shape.IsSelected = false;
         foreach (var shape in Diagram.ParkingSpots)
             shape.IsSelected = false;
+        _taxiwayPointSelectionOrder.Clear();
+        _taxiPathSelectionFromPoints = false;
         RefreshTaxiwayFilter();
         RefreshTaxiwayPointFilter();
         RefreshParkingSpotFilter();
@@ -1495,6 +1557,7 @@ public class MainViewModel : ViewModelBase
     {
         foreach (var shape in SelectedTaxiwayShapes.ToList())
             shape.IsSelected = false;
+        _taxiPathSelectionFromPoints = false;
         TaxiPathFilter.Reset();
         RefreshTaxiwayFilter();
     }
@@ -1659,7 +1722,11 @@ public class MainViewModel : ViewModelBase
         foreach (var shape in Diagram.TaxiwaySegments)
         {
             var edit = shape.SourceIndex < TaxiPathEdits.Count ? TaxiPathEdits[shape.SourceIndex] : null;
-            shape.IsSelected = edit != null && selected.Contains(edit);
+            var isSelected = edit != null && selected.Contains(edit);
+            // A real row click that changes the selection makes it a manual
+            // one — see _taxiPathSelectionFromPoints.
+            if (shape.IsSelected != isSelected) _taxiPathSelectionFromPoints = false;
+            shape.IsSelected = isSelected;
         }
     }
 
@@ -1690,6 +1757,7 @@ public class MainViewModel : ViewModelBase
     {
         foreach (var shape in Diagram?.TaxiwaySegments ?? [])
             shape.IsSelected = false;
+        _taxiPathSelectionFromPoints = false;
         RefreshTaxiwayFilter();
     }
 

@@ -1112,7 +1112,9 @@ watermark itself still reaches the `TextBox` underneath.
     list position, since `TaxiwayPointEdits` isn't a 1:1 same-order wrapper
     over a raw `AirportDetails` list the way `TaxiPathEdits` is). This is an
     independent selection from the taxiway-path one (selecting a point
-    doesn't affect path selection or vice versa) with no batch-edit popover
+    doesn't affect path selection or vice versa — **superseded 2026-09-27:**
+    selecting 2+ points now selects the taxi paths between them, see "New
+    feature: select a taxiway section by selecting its taxiway points") with no batch-edit popover
     of its own; a plain click on empty diagram space clears both selections
     at once (`ClearTaxiwaySelectionCommand`, shared with the taxiway-path
     clear).
@@ -2475,7 +2477,10 @@ taxi network's data stays internally consistent.
   multiple `InputBinding`s competing for the same key gesture, so a single
   command dispatches by priority: parking spot selection first (the
   original, established Delete behavior), then a taxiway path selection,
-  then a taxiway point selection. The three selections are independent (a
+  then a taxiway point selection (**amended 2026-09-27:** points go before
+  paths when the path selection was auto-selected from the points — see
+  "New feature: select a taxiway section by selecting its taxiway points").
+  The three selections are independent (a
   diagram click on one never clears the others), so more than one actually
   being non-empty at once IS possible — the order just needs to be
   deterministic. The three individual commands stay separately exposed
@@ -2914,3 +2919,116 @@ column filter is set **or** a taxiway is selected.
   Filters) and checks that the hidden row returns with its hide flag intact.
 - The existing `ClearTaxiPathFilterCommand_ResetsFiltersAndReflectsCanExecute`
   still passes unchanged.
+
+## New feature: select a taxiway section by selecting its taxiway points (2026-09-27)
+
+**User story:** as a user editing a stretch of taxiway, I want to select a few
+taxiway points on the diagram and have the taxi paths between them selected
+automatically. Then I can batch-edit the section without clicking each path.
+Selecting more points makes the selection more precise.
+
+**Route rules (user decisions):**
+- The first two points selected are the section's ends. Every later point is
+  a waypoint that the route must pass through, in whichever order gives the
+  shortest route.
+- The section is the **shortest** route, measured in **number of taxiway
+  points** (hops), not meters. Only routes that are *exactly* equally short
+  are all selected. For example, on a circular taxiway, two opposite points
+  select both halves, and adding a point on one half keeps only that half.
+- Between two consecutive selected points, the route never passes through
+  another selected point.
+- **Runway paths are never part of a section.** Parking paths aren't either
+  (their end is a parking spot, not a taxi point), nor are paths hidden from
+  the diagram.
+- Fallback (added during implementation): if no route can have the first two
+  points as its ends (e.g. points clicked in order A, B, C along a straight
+  taxiway, with C beyond B), the two selected points that give the shortest
+  route through all the others become the ends. Without this, nothing would
+  be selected.
+
+**Revised during testing:** the first version selected every route up to
+1.5× the shortest length in meters. After testing it on OIBK, the user
+switched to "shortest by taxiway-point count; ties only". That version could
+also run long enough on a real airport, with no progress indication, to look
+hung. The shortest-route rule is computed with breadth-first searches instead
+of enumerating routes, and runs in milliseconds, so no progress indicator is
+needed.
+
+**Acceptance criteria:**
+- Given 2+ taxiway points are selected, the taxi path selection is
+  **replaced** by the section (user decision), and the Taxi Paths grid is
+  filtered to it as usual. Right-click batch edit then applies to it.
+- Given one point, or none, no section is selected. Dropping from 2+ points
+  back below 2 clears the auto-selected paths. A single point never clears a
+  taxi path selection made by hand.
+- Given no route connects the points, no paths are selected.
+- Given the path selection was auto-selected from points, **Delete** acts on
+  the selected points (as before this feature), not on the auto-selected
+  paths.
+- The selection updates without a noticeable delay on a real airport.
+
+**Supersedes:** this changes two earlier requirements. Selecting 2+ taxiway
+points now drives the taxi path selection, so that selection is no longer
+fully independent (Taxiway Points grid requirement, v0.1 Edit tab). Delete
+now handles a point selection before a path selection when the paths were
+auto-selected from points (delete-hanging-paths feature). Selecting a path
+still never changes the point selection.
+
+**Implementation:** `Services/TaxiwaySectionFinder.cs` is pure and has no UI
+dependencies.
+- A breadth-first search runs from each selected point. It may reach other
+  selected points but never pass through them.
+- A Held-Karp dynamic program over visiting orders finds every leg (a pair
+  of consecutive selected points) used by some shortest order.
+- A path is selected when it lies on a shortest route of one of those legs
+  (`dist(i, a) + 1 + dist(j, b) == leg length`).
+- For more than 12 selected points, a greedy nearest-next order replaces the
+  exact dynamic program.
+- Measured on a synthetic 40×40 grid: about 10 ms for 12 points.
+
+`MainViewModel.SelectTaxiwaySectionFromPoints` builds the graph from the
+diagram's visible, non-runway, non-parking segments and applies the result.
+The order of the selected points is tracked in `_taxiwayPointSelectionOrder`.
+
+**Backwards compatibility:** session-only selection state; no persisted data
+touched.
+
+**Test coverage:**
+- `TaxiwaySectionFinderTests` covers:
+  - the user's circle example: both equally short halves, then narrowed by a
+    waypoint;
+  - only the shorter route selected when lengths differ;
+  - a longer route selected only when a waypoint forces it;
+  - a dead-end stub not selected;
+  - duplicate paths between the same two points;
+  - disconnected points;
+  - the fallback for points clicked in order along a line;
+  - the first two points staying the ends when possible;
+  - the greedy order for many points.
+- `MainViewModelTests` covers:
+  - `SelectingTwoTaxiwayPoints_SelectsTheTaxiPathsBetweenThem_ButNeverARunway`
+  - `DroppingBelowTwoTaxiwayPoints_ClearsTheAutoSelectedPaths`
+  - `SelectingOneTaxiwayPoint_LeavesAManualTaxiPathSelectionAlone`
+  - `DeleteSelectedCommand_PathsAutoSelectedFromPoints_DeletesThePoints`
+- Diagram interaction and speed on a real airport are verified manually.
+
+## UI change: smaller taxiway point markers with a constant on-screen size (2026-09-27)
+
+**User report:** the taxiway point dots on the diagram were large and badly
+overlapped the taxi paths, and they grew further on every zoom-in step.
+
+**Change:** the markers are drawn inside the zoomed canvas, and their radius
+was a fixed 9 canvas units. `AirportDiagramView` now exposes
+`TaxiwayPointRadius`, `TaxiwayPointStroke` and `TaxiwayPointSelectedStroke`,
+recomputed from `DiagramScale` whenever it changes (`UpdateScreenSizedMarkers`).
+The markers therefore stay a constant 4 px radius on screen, with a 1 px
+outline, or 2 px when selected, at every zoom level. This applies to both
+the Diagram and Edit tabs.
+
+**Acceptance criteria:** the dots are noticeably smaller than before and do
+not grow when zooming in or out. They can still be clicked and selected.
+
+**Backwards compatibility:** rendering only; no persisted data touched.
+
+**Test coverage:** WPF rendering, so it is verified manually, like the rest
+of the diagram's zoom behavior.

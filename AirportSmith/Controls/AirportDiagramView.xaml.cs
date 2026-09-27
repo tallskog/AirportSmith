@@ -127,6 +127,51 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(MapTileServiceProperty, value);
     }
 
+    // Taxiway point markers are drawn inside the zoomed canvas, so a fixed
+    // radius grew with every zoom step until the dots covered the taxi paths
+    // they sit on. These are the marker's radius/stroke in canvas units for a
+    // constant on-screen size, recomputed whenever DiagramScale changes (see
+    // UpdateScreenSizedMarkers) and bound from the TaxiwayPoints template.
+    private const double TaxiwayPointScreenRadius = 4;
+    private const double TaxiwayPointScreenStroke = 1;
+    private const double TaxiwayPointSelectedScreenStroke = 2;
+
+    public static readonly DependencyProperty TaxiwayPointRadiusProperty =
+        DependencyProperty.Register(nameof(TaxiwayPointRadius), typeof(double), typeof(AirportDiagramView), new PropertyMetadata(TaxiwayPointScreenRadius));
+
+    public double TaxiwayPointRadius
+    {
+        get => (double)GetValue(TaxiwayPointRadiusProperty);
+        private set => SetValue(TaxiwayPointRadiusProperty, value);
+    }
+
+    public static readonly DependencyProperty TaxiwayPointStrokeProperty =
+        DependencyProperty.Register(nameof(TaxiwayPointStroke), typeof(double), typeof(AirportDiagramView), new PropertyMetadata(TaxiwayPointScreenStroke));
+
+    public double TaxiwayPointStroke
+    {
+        get => (double)GetValue(TaxiwayPointStrokeProperty);
+        private set => SetValue(TaxiwayPointStrokeProperty, value);
+    }
+
+    public static readonly DependencyProperty TaxiwayPointSelectedStrokeProperty =
+        DependencyProperty.Register(nameof(TaxiwayPointSelectedStroke), typeof(double), typeof(AirportDiagramView), new PropertyMetadata(TaxiwayPointSelectedScreenStroke));
+
+    public double TaxiwayPointSelectedStroke
+    {
+        get => (double)GetValue(TaxiwayPointSelectedStrokeProperty);
+        private set => SetValue(TaxiwayPointSelectedStrokeProperty, value);
+    }
+
+    private void UpdateScreenSizedMarkers()
+    {
+        var scale = DiagramScale.ScaleX;
+        if (scale <= 0) return;
+        TaxiwayPointRadius = TaxiwayPointScreenRadius / scale;
+        TaxiwayPointStroke = TaxiwayPointScreenStroke / scale;
+        TaxiwayPointSelectedStroke = TaxiwayPointSelectedScreenStroke / scale;
+    }
+
     // Off by default (see MainViewModel.ShowMap's own doc comment - a
     // session-only preference, opt-in since turning it on is this app's first
     // outbound network call). Toggling it immediately refreshes/clears the
@@ -200,6 +245,8 @@ public partial class AirportDiagramView : UserControl
     {
         InitializeComponent();
         MapTiles.ItemsSource = _mapTiles;
+        DiagramScale.Changed += (_, _) => UpdateScreenSizedMarkers();
+        UpdateScreenSizedMarkers();
         _tileRefreshTimer.Tick += (_, _) =>
         {
             _tileRefreshTimer.Stop();
