@@ -188,6 +188,13 @@
                                            Text="{Binding DataContext.LastProjectSavePath, RelativeSource={RelativeSource AncestorType=Window}, StringFormat='Saved to: {0}'}"/>
                             </StackPanel>
 
+                            <!-- Adds deleteAllTaxiwaySigns="TRUE" to the exported XML's
+                                 <DeleteAirport> — see AirportDetails.DeleteAllTaxiwaySigns. -->
+                            <CheckBox Margin="0,0,0,10"
+                                      Content="Delete all default taxiway signs on export"
+                                      ToolTip="Adds deleteAllTaxiwaySigns to the exported XML. The stock airport's taxiway signs aren't removed otherwise, so after renaming taxiways the old signs would still show the old names."
+                                      IsChecked="{Binding DataContext.DeleteAllTaxiwaySigns, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
                             <!-- The shared, user-managed name list every taxi path's Name
                                  picker (below) draws from — see TaxiName.cs/TaxiNameEditViewModel.
                                  Renaming here is instantly reflected wherever that name is used

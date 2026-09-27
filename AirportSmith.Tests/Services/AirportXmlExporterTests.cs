@@ -74,6 +74,20 @@ public class AirportXmlExporterTests
         Assert.Equal("TRUE", deleteAirport.Attribute("deleteAllTaxiways")!.Value);
         Assert.Null(deleteAirport.Attribute("deleteAllFrequencies"));
         Assert.Null(deleteAirport.Attribute("deleteAllJetways"));
+        Assert.Null(deleteAirport.Attribute("deleteAllTaxiwaySigns"));
+    }
+
+    [Fact]
+    public void Build_DeleteAllTaxiwaySignsEnabled_AddsItToDeleteAirport()
+    {
+        var airport = Airport(a => a.DeleteAllTaxiwaySigns = true);
+
+        var deleteAirport = AirportXmlExporter.Build(airport).Document
+            .Root!.Element("Airport")!.Element("DeleteAirport")!;
+
+        Assert.Equal("TRUE", deleteAirport.Attribute("deleteAllTaxiwaySigns")!.Value);
+        Assert.Equal("TRUE", deleteAirport.Attribute("deleteAllRunways")!.Value);
+        Assert.Equal("TRUE", deleteAirport.Attribute("deleteAllTaxiways")!.Value);
     }
 
     [Fact]

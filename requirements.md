@@ -1503,7 +1503,9 @@ Acceptance criteria:
 - The `<Airport>` element's `ident`/`lat`/`lon`/`alt`/`name`/`magvar` match
   the loaded `AirportDetails`, and it contains a `<DeleteAirport
   deleteAllRunways="true" deleteAllTaxiways="true" />` with no other flags
-  set.
+  set (**amended 2026-09-27:** plus `deleteAllTaxiwaySigns="TRUE"` when the
+  user enables it — see "New feature: delete all default taxiway signs on
+  export").
 - Every `AirportDetails.Runways` entry becomes a `<Runway>` with matching
   geometry/surface/lighting, a `<Vasi>` element only for each non-null VASI
   slot (not an empty/default one for "not installed" — `biasX`/`biasZ`
@@ -3032,3 +3034,38 @@ not grow when zooming in or out. They can still be clicked and selected.
 
 **Test coverage:** WPF rendering, so it is verified manually, like the rest
 of the diagram's zoom behavior.
+
+## New feature: delete all default taxiway signs on export (2026-09-27)
+
+**User story:** as a user who renamed taxiways, I want to remove the stock
+airport's default taxiway signs. Otherwise the sim keeps showing signs with
+the old names. `deleteAllTaxiways` doesn't remove signs, so
+`deleteAllTaxiwaySigns` is the only way to get rid of them.
+
+**Acceptance criteria:**
+- The Edit tab has a **"Delete all default taxiway signs on export"**
+  checkbox, off by default.
+- When it is checked, Export Airport XML adds `deleteAllTaxiwaySigns="TRUE"`
+  to `<DeleteAirport>`. When it is unchecked, the attribute is omitted, and
+  the output is identical to before this feature.
+- The attribute name was checked against the local MSFS 2024 SDK's
+  `Tools/bin/bglcomp.xsd`, where it is a `DeleteAirport` attribute of type
+  `stBool`.
+- The setting is per airport and saved with the project
+  (`AirportDetails.DeleteAllTaxiwaySigns`). Loading a different airport
+  shows that airport's value. A fresh SimConnect load starts unchecked.
+
+**Backwards compatibility:** this adds a new `bool` to the persisted project
+JSON. A project file saved before this feature has no such field and loads
+it as `false`, which matches the previous export behavior; nothing else is
+reset. No schema version bump is needed.
+
+**Test coverage:**
+- `AirportXmlExporterTests.Build_DeleteAllTaxiwaySignsEnabled_AddsItToDeleteAirport`.
+- `AirportXmlExporterTests.Build_Always_DeleteAirportHasOnlyRunwaysAndTaxiwaysFlags`
+  now also asserts that the attribute is absent by default.
+- `AirportProjectStoreTests.SaveThenLoad_RoundTripsDeleteAllTaxiwaySigns` and
+  `Load_OlderFileWithoutDeleteAllTaxiwaySigns_DefaultsFalse`.
+- `MainViewModelTests.DeleteAllTaxiwaySigns_ReflectsAndWritesTheLoadedAirport`
+  and `DeleteAllTaxiwaySigns_NoAirportLoaded_IsFalseAndIgnoresWrites`.
+- Checkbox rendering is verified manually.

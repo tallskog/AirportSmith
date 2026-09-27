@@ -194,6 +194,20 @@ public class MainViewModel : ViewModelBase
     // same reason (an airport can have hundreds of spots, so a per-row
     // checkbox would be impractical for decluttering) — never persisted,
     // never touches Airport, and hiding also clears any parking selection.
+    // Edit tab checkbox for AirportDetails.DeleteAllTaxiwaySigns (see its doc
+    // comment) — stored on the airport itself, so it's saved with the project
+    // and picked up by Export Airport XML.
+    public bool DeleteAllTaxiwaySigns
+    {
+        get => Airport?.DeleteAllTaxiwaySigns ?? false;
+        set
+        {
+            if (Airport is null || Airport.DeleteAllTaxiwaySigns == value) return;
+            Airport.DeleteAllTaxiwaySigns = value;
+            OnPropertyChanged();
+        }
+    }
+
     private bool _hideAllParkingSpots;
     public bool HideAllParkingSpots
     {
@@ -577,6 +591,7 @@ public class MainViewModel : ViewModelBase
             RaiseParkingPlacementChanged();
         }
         SelectedRunwayEdit = null;
+        OnPropertyChanged(nameof(DeleteAllTaxiwaySigns));
         _taxiwayPointSelectionOrder.Clear();
         _taxiPathSelectionFromPoints = false;
 

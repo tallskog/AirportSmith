@@ -19,4 +19,13 @@ public class AirportDetails
     // The sim's TAXI_NAME rows, referenced by TaxiPathSegment.TaxiNameId — see
     // TaxiName.cs for why references use a stable Id rather than list position.
     public List<TaxiName> TaxiNames { get; set; } = [];
+
+    // User export option, not sim data (SimConnect never sets it): when true,
+    // the exported XML's <DeleteAirport> also carries deleteAllTaxiwaySigns=
+    // "TRUE". The stock airport's taxiway signs are separate objects that
+    // deleteAllTaxiways doesn't remove, so after renaming taxiways this is the
+    // only way to get rid of the default signs showing the old names. Saved
+    // with the project; a project file from before this existed loads it as
+    // false.
+    public bool DeleteAllTaxiwaySigns { get; set; }
 }

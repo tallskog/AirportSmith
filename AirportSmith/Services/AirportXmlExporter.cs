@@ -59,7 +59,9 @@ public class AirportXmlExporter : IAirportXmlExporter
             new XAttribute("magvar", F(airport.MagneticVariationDeg)),
             new XElement("DeleteAirport",
                 new XAttribute("deleteAllRunways", "TRUE"),
-                new XAttribute("deleteAllTaxiways", "TRUE")));
+                new XAttribute("deleteAllTaxiways", "TRUE"),
+                // Only when the user opts in — see AirportDetails.DeleteAllTaxiwaySigns.
+                airport.DeleteAllTaxiwaySigns ? new XAttribute("deleteAllTaxiwaySigns", "TRUE") : null));
 
         foreach (var runway in airport.Runways)
             airportElement.Add(BuildRunway(runway, warnings));

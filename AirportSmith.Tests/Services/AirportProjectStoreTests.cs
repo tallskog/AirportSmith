@@ -131,6 +131,52 @@ public class AirportProjectStoreTests
     }
 
     [Fact]
+    public void SaveThenLoad_RoundTripsDeleteAllTaxiwaySigns()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var store = new AirportProjectStore(baseDir);
+            store.Save(new AirportDetails { Icao = "EFHK", DeleteAllTaxiwaySigns = true });
+
+            Assert.True(store.Load("EFHK")!.DeleteAllTaxiwaySigns);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // A project saved before the option existed has no DeleteAllTaxiwaySigns
+    // field at all — must load as false (the previous export behavior), with
+    // everything else intact.
+    [Fact]
+    public void Load_OlderFileWithoutDeleteAllTaxiwaySigns_DefaultsFalse()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "EFHK.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": { "Icao": "EFHK", "Name": "Helsinki-Vantaa" }
+                }
+                """);
+
+            var loaded = new AirportProjectStore(baseDir).Load("EFHK");
+
+            Assert.False(loaded!.DeleteAllTaxiwaySigns);
+            Assert.Equal("Helsinki-Vantaa", loaded.Name);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Load_NoProjectSaved_ReturnsNull()
     {
         var baseDir = CreateTempDirectory();

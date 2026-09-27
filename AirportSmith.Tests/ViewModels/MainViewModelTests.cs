@@ -526,6 +526,28 @@ public class MainViewModelTests
         Assert.Equal(airport.TaxiNames[0].Id, vm.TaxiNames[0].Id);
     }
 
+    [Fact]
+    public void DeleteAllTaxiwaySigns_ReflectsAndWritesTheLoadedAirport()
+    {
+        var airport = new AirportDetails { Icao = "EFHK", DeleteAllTaxiwaySigns = true };
+        var vm = CreateViewModelWithAirport(airport);
+        Assert.True(vm.DeleteAllTaxiwaySigns);
+
+        vm.DeleteAllTaxiwaySigns = false;
+
+        Assert.False(vm.Airport!.DeleteAllTaxiwaySigns);
+    }
+
+    [Fact]
+    public void DeleteAllTaxiwaySigns_NoAirportLoaded_IsFalseAndIgnoresWrites()
+    {
+        var vm = new MainViewModel(new FakeSimConnectService());
+
+        vm.DeleteAllTaxiwaySigns = true;
+
+        Assert.False(vm.DeleteAllTaxiwaySigns);
+    }
+
     // The view relies on this to scroll to and focus the new row.
     [Fact]
     public void AddTaxiNameCommand_Execute_RaisesTaxiNameAddedWithTheNewRow()
