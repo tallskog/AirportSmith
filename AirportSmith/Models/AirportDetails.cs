@@ -28,4 +28,13 @@ public class AirportDetails
     // with the project; a project file from before this existed loads it as
     // false.
     public bool DeleteAllTaxiwaySigns { get; set; }
+
+    // User export option, not sim data: when true, the exported <Airport>
+    // carries applyFlatten="TRUE" ("generate flattening rectangles on the
+    // airport based on runways altitude and inclination"). The export writes
+    // a fresh <Airport> record, so any flattening the stock record had is
+    // lost otherwise — seen at OEDF as small terrain bumps lifting the jetway
+    // tunnels. SimConnect can't read the stock value, hence a manual option.
+    // Saved with the project; older project files load it as false.
+    public bool ApplyFlatten { get; set; }
 }

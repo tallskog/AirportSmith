@@ -3223,3 +3223,101 @@ are ordinary Taxi Name/`TaxiNameId` edits, saved as before.
   - Covered by
     `MainViewModelTests.ManuallyNamingAListedPath_UpdatesItsRow_AndTheSuggestedNameMarksItApplied`
     and `RenamingOrDeletingATaxiName_UpdatesTheRowsOfPathsUsingIt`.
+
+## New feature: warn when parking edits would detach a stock jetway (2026-09-27)
+
+**Background (researched 2026-09-27, against the local MSFS 2024 SDK):**
+- The Scenery Editor warning "parking with type gate must have jetway" is
+  documented (Scenery Editor → Jetway Objects) as "a warning only and will
+  not prevent the airport from being considered valid". The editor only
+  sees the project's own content, and AirportSmith doesn't export jetways.
+- The export never sets `deleteAllJetways`, so the stock jetways stay in the
+  sim. Per `bglcomp.xsd`, a `<Jetway>` attaches to its parking spot by
+  `gateName` + `parkingNumber` (+ `suffix`), so a stock jetway should keep
+  working at a re-exported gate with the same identity. This is to be
+  confirmed in the sim at OEDF.
+- Exporting jetways ourselves was rejected. `<Jetway>` needs the jetway
+  SimObject (`<SimObject containerTitle>`). Facility Data `JETWAY` only has
+  PARKING_GATE/SUFFIX/SPOT. `RequestJetwayData` gives position and heading
+  plus an object ID (confirmed returning data at OEDF), and the model title
+  might be readable from it but is unverified. The terminal tunnel
+  ("link") is a separate scenery object that no API exposes. Replacing
+  jetways would therefore need `deleteAllJetways` and would likely lose the
+  tunnels.
+
+**User story:** as a user editing parking, I want to be told when an edit
+means a stock jetway will stop working, since the Scenery Editor's own
+warning can't tell me that.
+
+**Acceptance criteria:**
+- When an airport is loaded from the sim, each jetway records the gate it
+  served (`Jetway.GateNameCode`/`GateNumber`/`GateSuffixCode`/
+  `GateBiasXMeters`/`GateBiasZMeters`, via `JetwayGateCheck.CaptureGates`,
+  matched by `ParkingIndex` == `TaxiParkingSpot.ItemIndex`). These are saved
+  with the project and never edited.
+- Export Airport XML adds a warning (`JetwayGateCheck.FindWarnings`) when:
+  - no parking spot has a jetway's original name + number + suffix any more
+    (renamed, renumbered or deleted);
+  - the spot with that identity is more than 2 m from the original position.
+- Other edits (heading, radius, type, a move within 2 m) produce no warning.
+- The check is by gate identity, not spot record, matching how the sim
+  attaches jetways: if another spot takes over the identity, only its
+  distance is checked. There is one warning per gate, even with several
+  jetways.
+- Jetways loaded from a project saved before this feature have no recorded
+  gate. They produce a single summary warning that they can't be checked;
+  nothing is guessed.
+- Still no `<Jetway>` element is exported.
+
+**Backwards compatibility:** five new nullable fields on `Jetway`, persisted
+in the project JSON. Older files load them as null, with every existing
+jetway field intact; there are tests for both the old-file load and the
+round trip.
+
+**Test coverage:**
+- `JetwayGateCheckTests` covers:
+  - capture;
+  - unchanged gate and small moves produce no warning;
+  - rename, renumber, suffix change and delete each warn;
+  - another spot taking over the identity is checked by distance;
+  - a move beyond 2 m warns;
+  - several jetways at one gate give one warning;
+  - unrecorded jetways give one summary warning.
+- `AirportXmlExporterTests.Build_GateWithJetwayRenumbered_WarnsInTheExportWarnings`.
+- `AirportProjectStoreTests.Load_OlderFileWithJetwaysWithoutGateFields_LoadsThemAsNull`
+  and `SaveThenLoad_RoundTripsJetwayGateFields`.
+
+## Open issue: small terrain hills after installing an exported OEDF (2026-09-27)
+
+**User report:** after installing an AirportSmith export of OEDF, small
+hills appeared in places, e.g. at the jetways, lifting the jetway tunnels.
+
+**Leading hypothesis (not yet confirmed):**
+- The export writes a fresh `<Airport>` record with only ident, lat, lon,
+  alt, name and magvar. Airport-level attributes the stock record may have
+  had are left at their defaults.
+- Most relevant is `applyFlatten`: "Generate flattening rectangles on the
+  airport based on runways altitude and inclination". `isOnTIN`,
+  `airportTestRadius` and the ground-merging values are also candidates.
+- If the stock OEDF record flattened its terrain this way and ours doesn't,
+  the raw terrain shows through as bumps.
+- None of these attributes can be read through SimConnect Facility Data (not
+  in its AIRPORT member list), so the stock values are unknown.
+
+**Follow-up (2026-09-27):** the user added `applyFlatten="TRUE"` by hand to
+the exported OEDF.xml, then asked for it as an option. It is now the Edit
+tab checkbox **"Flatten airport terrain on export"**
+(`AirportDetails.ApplyFlatten`, same pattern as `DeleteAllTaxiwaySigns`).
+- When checked, the exported `<Airport>` gets `applyFlatten="TRUE"`. When
+  unchecked, the attribute is omitted, so the output is identical to before.
+- It is off by default, since the stock value is unknown and it changes
+  terrain.
+- It is saved per airport in the project. Older project files load it as
+  false, with nothing else reset.
+- If bumps remain with it on, the other airport-level candidates above are
+  next.
+- Covered by `AirportXmlExporterTests.Build_ApplyFlatten_OnlyWhenEnabled`,
+  `AirportProjectStoreTests.SaveThenLoad_RoundTripsDeleteAllTaxiwaySigns`
+  (now also round-trips ApplyFlatten),
+  `Load_OlderFileWithoutDeleteAllTaxiwaySigns_DefaultsFalse` (now also checks
+  ApplyFlatten) and `MainViewModelTests.ApplyFlatten_ReflectsAndWritesTheLoadedAirport`.

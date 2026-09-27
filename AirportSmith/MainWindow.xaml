@@ -190,6 +190,12 @@
 
                             <!-- Adds deleteAllTaxiwaySigns="TRUE" to the exported XML's
                                  <DeleteAirport> — see AirportDetails.DeleteAllTaxiwaySigns. -->
+                            <!-- Adds applyFlatten="TRUE" to the exported <Airport> — see
+                                 AirportDetails.ApplyFlatten. -->
+                            <CheckBox Margin="0,0,0,4"
+                                      Content="Flatten airport terrain on export"
+                                      ToolTip="Adds applyFlatten to the exported XML, so the sim flattens the terrain inside the airport. Without it the stock airport's flattening can be lost, showing up as small hills (e.g. lifting jetway tunnels)."
+                                      IsChecked="{Binding DataContext.ApplyFlatten, RelativeSource={RelativeSource AncestorType=Window}}"/>
                             <CheckBox Margin="0,0,0,10"
                                       Content="Delete all default taxiway signs on export"
                                       ToolTip="Adds deleteAllTaxiwaySigns to the exported XML. The stock airport's taxiway signs aren't removed otherwise, so after renaming taxiways the old signs would still show the old names."

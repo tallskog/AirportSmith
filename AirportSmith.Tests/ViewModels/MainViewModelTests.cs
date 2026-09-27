@@ -846,6 +846,17 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void ApplyFlatten_ReflectsAndWritesTheLoadedAirport()
+    {
+        var vm = CreateViewModelWithAirport(new AirportDetails { Icao = "EFHK", ApplyFlatten = true });
+        Assert.True(vm.ApplyFlatten);
+
+        vm.ApplyFlatten = false;
+
+        Assert.False(vm.Airport!.ApplyFlatten);
+    }
+
+    [Fact]
     public void DeleteAllTaxiwaySigns_NoAirportLoaded_IsFalseAndIgnoresWrites()
     {
         var vm = new MainViewModel(new FakeSimConnectService());

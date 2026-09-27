@@ -209,6 +209,19 @@ public class MainViewModel : ViewModelBase
         }
     }
 
+    // Edit tab checkbox for AirportDetails.ApplyFlatten — same pattern as
+    // DeleteAllTaxiwaySigns above.
+    public bool ApplyFlatten
+    {
+        get => Airport?.ApplyFlatten ?? false;
+        set
+        {
+            if (Airport is null || Airport.ApplyFlatten == value) return;
+            Airport.ApplyFlatten = value;
+            OnPropertyChanged();
+        }
+    }
+
     private bool _hideAllParkingSpots;
     public bool HideAllParkingSpots
     {
@@ -686,6 +699,7 @@ public class MainViewModel : ViewModelBase
         }
         SelectedRunwayEdit = null;
         OnPropertyChanged(nameof(DeleteAllTaxiwaySigns));
+        OnPropertyChanged(nameof(ApplyFlatten));
         DismissTaxiNameSuggestions();
         _taxiwayPointSelectionOrder.Clear();
         _taxiPathSelectionFromPoints = false;

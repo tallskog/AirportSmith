@@ -137,9 +137,11 @@ public class AirportProjectStoreTests
         try
         {
             var store = new AirportProjectStore(baseDir);
-            store.Save(new AirportDetails { Icao = "EFHK", DeleteAllTaxiwaySigns = true });
+            store.Save(new AirportDetails { Icao = "EFHK", DeleteAllTaxiwaySigns = true, ApplyFlatten = true });
 
-            Assert.True(store.Load("EFHK")!.DeleteAllTaxiwaySigns);
+            var loaded = store.Load("EFHK")!;
+            Assert.True(loaded.DeleteAllTaxiwaySigns);
+            Assert.True(loaded.ApplyFlatten);
         }
         finally
         {
@@ -168,7 +170,65 @@ public class AirportProjectStoreTests
             var loaded = new AirportProjectStore(baseDir).Load("EFHK");
 
             Assert.False(loaded!.DeleteAllTaxiwaySigns);
+            Assert.False(loaded.ApplyFlatten);
             Assert.Equal("Helsinki-Vantaa", loaded.Name);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // Jetways saved before gate recording existed: the new Gate* fields load
+    // as null (reported by JetwayGateCheck as "can't be checked"), and the
+    // existing jetway fields are kept.
+    [Fact]
+    public void Load_OlderFileWithJetwaysWithoutGateFields_LoadsThemAsNull()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "OEDF.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": {
+                        "Icao": "OEDF",
+                        "Jetways": [ { "ParkingIndex": 7, "JetwayObjectId": 42, "Status": 0, "Latitude": 26.4, "Longitude": 49.8, "HeadingDeg": 90 } ]
+                    }
+                }
+                """);
+
+            var jetway = Assert.Single(new AirportProjectStore(baseDir).Load("OEDF")!.Jetways);
+
+            Assert.Equal(7, jetway.ParkingIndex);
+            Assert.Equal(42, jetway.JetwayObjectId);
+            Assert.Equal(26.4, jetway.Latitude);
+            Assert.Null(jetway.GateNameCode);
+            Assert.Null(jetway.GateNumber);
+            Assert.Null(jetway.GateBiasXMeters);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsJetwayGateFields()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var store = new AirportProjectStore(baseDir);
+            var airport = new AirportDetails { Icao = "OEDF" };
+            airport.Jetways.Add(new Jetway { ParkingIndex = 7, GateNameCode = 12, GateNumber = 5, GateSuffixCode = 0, GateBiasXMeters = 10, GateBiasZMeters = 20 });
+            store.Save(airport);
+
+            var jetway = Assert.Single(store.Load("OEDF")!.Jetways);
+
+            Assert.Equal((12, 5, 0, 10.0, 20.0), (jetway.GateNameCode, jetway.GateNumber, jetway.GateSuffixCode, jetway.GateBiasXMeters, jetway.GateBiasZMeters));
         }
         finally
         {

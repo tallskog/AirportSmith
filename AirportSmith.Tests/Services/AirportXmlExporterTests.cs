@@ -78,6 +78,34 @@ public class AirportXmlExporterTests
     }
 
     [Fact]
+    public void Build_GateWithJetwayRenumbered_WarnsInTheExportWarnings()
+    {
+        var airport = Airport(a =>
+        {
+            a.ParkingSpots.Add(new TaxiParkingSpot { ItemIndex = 0, Type = 1, NameCode = 12, Number = 5, RadiusMeters = 20 });
+            a.Jetways.Add(new Jetway { ParkingIndex = 0 });
+        });
+        JetwayGateCheck.CaptureGates(airport);
+        airport.ParkingSpots[0].Number = 6;
+
+        var result = AirportXmlExporter.Build(airport);
+
+        Assert.Contains(result.Warnings, w => w.Contains("GATE_A 5") && w.Contains("no gate to attach to"));
+        // Still no <Jetway> element — stock jetways are kept, not exported.
+        Assert.Empty(result.Document.Root!.Element("Airport")!.Elements("Jetway"));
+    }
+
+    [Fact]
+    public void Build_ApplyFlatten_OnlyWhenEnabled()
+    {
+        var off = AirportXmlExporter.Build(Airport(_ => { })).Document.Root!.Element("Airport")!;
+        var on = AirportXmlExporter.Build(Airport(a => a.ApplyFlatten = true)).Document.Root!.Element("Airport")!;
+
+        Assert.Null(off.Attribute("applyFlatten"));
+        Assert.Equal("TRUE", on.Attribute("applyFlatten")!.Value);
+    }
+
+    [Fact]
     public void Build_DeleteAllTaxiwaySignsEnabled_AddsItToDeleteAirport()
     {
         var airport = Airport(a => a.DeleteAllTaxiwaySigns = true);

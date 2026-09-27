@@ -57,6 +57,8 @@ public class AirportXmlExporter : IAirportXmlExporter
             new XAttribute("alt", F(airport.ElevationMeters)),
             new XAttribute("name", airport.Name),
             new XAttribute("magvar", F(airport.MagneticVariationDeg)),
+            // Only when the user opts in — see AirportDetails.ApplyFlatten.
+            airport.ApplyFlatten ? new XAttribute("applyFlatten", "TRUE") : null,
             new XElement("DeleteAirport",
                 new XAttribute("deleteAllRunways", "TRUE"),
                 new XAttribute("deleteAllTaxiways", "TRUE"),
@@ -100,6 +102,10 @@ public class AirportXmlExporter : IAirportXmlExporter
 
         foreach (var point in BuildTaxiwayPoints(exportablePaths.Select(p => p.Path)))
             airportElement.Add(point);
+
+        // Stock jetways are kept, not exported — warn where parking edits
+        // would detach one from its gate (see JetwayGateCheck).
+        warnings.AddRange(JetwayGateCheck.FindWarnings(airport));
 
         var parkingIndices = ComputeParkingIndices(airport.ParkingSpots, warnings);
         for (var i = 0; i < airport.ParkingSpots.Count; i++)

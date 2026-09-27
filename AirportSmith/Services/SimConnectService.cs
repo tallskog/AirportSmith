@@ -357,7 +357,12 @@ public class SimConnectService : ISimConnectService
         }
 
         if (result.Status == AirportLookupStatus.Success)
+        {
             await EnrichJetwaysAsync(pending);
+            // Before any edits: remember which gate each jetway serves, so the
+            // export can warn when an edit detaches it (see JetwayGateCheck).
+            JetwayGateCheck.CaptureGates(pending.Details);
+        }
 
         return result;
     }
