@@ -428,9 +428,26 @@
                                                      hundreds) crashed the app with an
                                                      InvalidOperationException the moment a Taxi Names row was
                                                      being edited while any of these re-attached. -->
-                                                <ComboBox ItemsSource="{Binding DataContext.TaxiNamesPicker, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                          DisplayMemberPath="DisplayValue" SelectedValuePath="Id"
-                                                          SelectedValue="{Binding TaxiNameId, UpdateSourceTrigger=PropertyChanged}"/>
+                                                <!-- Runway/Parking paths' names can't be edited (see
+                                                     TaxiPathNameRules), so those rows show three dashes instead. -->
+                                                <Grid>
+                                                    <ComboBox ItemsSource="{Binding DataContext.TaxiNamesPicker, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              DisplayMemberPath="DisplayValue" SelectedValuePath="Id"
+                                                              SelectedValue="{Binding TaxiNameId, UpdateSourceTrigger=PropertyChanged}"
+                                                              Visibility="{Binding IsNameEditable, Converter={StaticResource BoolToVisibility}}"/>
+                                                    <TextBlock Text="---" VerticalAlignment="Center" Margin="4,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsNameEditable}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Grid>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>

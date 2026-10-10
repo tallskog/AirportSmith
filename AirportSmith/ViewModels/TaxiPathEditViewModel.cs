@@ -1,4 +1,5 @@
 using AirportSmith.Models;
+using AirportSmith.Services;
 
 namespace AirportSmith.ViewModels;
 
@@ -12,13 +13,21 @@ namespace AirportSmith.ViewModels;
 // TaxiNameId resolves the same live AirportDetails.TaxiNames entry, renaming
 // or reassigning it here (or in the Taxi Names panel) is visible everywhere
 // that name is used, unlike the free-text-per-segment approach this replaced.
+//
+// Name and Type are linked per TaxiPathNameRules: naming a Taxi/Path/Unknown
+// path makes it Taxi, clearing its name makes it Path, and a Runway/Parking
+// path's name can't be edited. isNamed resolves a TaxiNameId to "has a real
+// name" (MainViewModel passes one that treats the blank "(no name)" entry
+// as unnamed); without one, any non-null id counts as named.
 public class TaxiPathEditViewModel : ViewModelBase
 {
     private readonly TaxiPathSegment _segment;
+    private readonly Func<Guid?, bool> _isNamed;
 
-    public TaxiPathEditViewModel(TaxiPathSegment segment)
+    public TaxiPathEditViewModel(TaxiPathSegment segment, Func<Guid?, bool>? isNamed = null)
     {
         _segment = segment;
+        _isNamed = isNamed ?? (id => id is not null);
     }
 
     // Read-only — the sim's own TAXI_POINT indices this path connects
@@ -35,18 +44,34 @@ public class TaxiPathEditViewModel : ViewModelBase
         get => _segment.TaxiNameId;
         set
         {
-            if (_segment.TaxiNameId == value) return;
-            _segment.TaxiNameId = value;
-            OnPropertyChanged();
+            // Ignored rather than thrown — the grid shows "---" instead of a
+            // picker for these, but batch edit and accepted name suggestions
+            // can still reach this with a mixed selection.
+            if (_segment.TaxiNameId == value || !IsNameEditable) return;
+            SetTaxiNameIdCore(value);
+            if (TaxiPathNameRules.FollowsName(Type))
+                Type = TaxiPathNameRules.TypeForName(_isNamed(value));
         }
     }
 
+    private void SetTaxiNameIdCore(Guid? value)
+    {
+        _segment.TaxiNameId = value;
+        OnPropertyChanged(nameof(TaxiNameId));
+    }
+
+    // False for Runway/Parking paths — see TaxiPathNameRules.
+    public bool IsNameEditable => !TaxiPathNameRules.IsNameLocked(Type);
+
     // Called when a TaxiName is deleted from the Taxi Names panel, so no row
-    // is left silently referencing a name that no longer exists.
+    // is left silently referencing a name that no longer exists. Bypasses the
+    // name lock and the name -> type rule: a Parking path must not keep a
+    // dangling reference either, and deleting a name entry isn't the user
+    // retyping this path.
     public void ClearTaxiNameIfReferencing(Guid deletedId)
     {
         if (_segment.TaxiNameId == deletedId)
-            TaxiNameId = null;
+            SetTaxiNameIdCore(null);
     }
 
     public TaxiPathType Type
@@ -57,6 +82,11 @@ public class TaxiPathEditViewModel : ViewModelBase
             if (_segment.Type == value) return;
             _segment.Type = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(IsNameEditable));
+            // A Runway path can't carry a name (same as on read). A Parking
+            // path keeps its name, just hidden and locked.
+            if (value == TaxiPathType.Runway && _segment.TaxiNameId is not null)
+                SetTaxiNameIdCore(null);
         }
     }
 

@@ -119,4 +119,113 @@ public class TaxiPathEditViewModelTests
         segment.StartIndex = 10;
         Assert.Equal(10, vm.StartIndex);
     }
+
+    [Theory]
+    [InlineData(TaxiPathType.Path)]
+    [InlineData(TaxiPathType.Unknown)]
+    public void AssigningName_ConvertsToTaxi(TaxiPathType type)
+    {
+        var segment = new TaxiPathSegment { Type = type };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.TaxiNameId = Guid.NewGuid();
+
+        Assert.Equal(TaxiPathType.Taxi, segment.Type);
+    }
+
+    [Fact]
+    public void RemovingName_ConvertsToPath()
+    {
+        var segment = new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = Guid.NewGuid() };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.TaxiNameId = null;
+
+        Assert.Equal(TaxiPathType.Path, segment.Type);
+    }
+
+    [Fact]
+    public void AssigningBlankName_ConvertsToPath()
+    {
+        var blankId = Guid.NewGuid();
+        var segment = new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = Guid.NewGuid() };
+        var vm = new TaxiPathEditViewModel(segment, id => id is not null && id != blankId);
+
+        vm.TaxiNameId = blankId;
+
+        Assert.Equal(blankId, segment.TaxiNameId);
+        Assert.Equal(TaxiPathType.Path, segment.Type);
+    }
+
+    [Theory]
+    [InlineData(TaxiPathType.Runway)]
+    [InlineData(TaxiPathType.Parking)]
+    public void RunwayAndParking_NameIsNotEditable(TaxiPathType type)
+    {
+        var originalId = type == TaxiPathType.Parking ? Guid.NewGuid() : (Guid?)null;
+        var segment = new TaxiPathSegment { Type = type, TaxiNameId = originalId };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.TaxiNameId = Guid.NewGuid();
+
+        Assert.False(vm.IsNameEditable);
+        Assert.Equal(originalId, segment.TaxiNameId);
+        Assert.Equal(type, segment.Type);
+    }
+
+    [Theory]
+    [InlineData(TaxiPathType.Vehicle)]
+    [InlineData(TaxiPathType.Closed)]
+    public void OtherTypes_NameEditableWithoutChangingType(TaxiPathType type)
+    {
+        var segment = new TaxiPathSegment { Type = type };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.TaxiNameId = Guid.NewGuid();
+        Assert.Equal(type, segment.Type);
+        vm.TaxiNameId = null;
+        Assert.Equal(type, segment.Type);
+        Assert.True(vm.IsNameEditable);
+    }
+
+    [Fact]
+    public void ChangingTypeToRunway_RemovesName()
+    {
+        var segment = new TaxiPathSegment { Type = TaxiPathType.Taxi, TaxiNameId = Guid.NewGuid() };
+        var vm = new TaxiPathEditViewModel(segment);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.Type = TaxiPathType.Runway;
+
+        Assert.Null(segment.TaxiNameId);
+        Assert.Contains(nameof(TaxiPathEditViewModel.TaxiNameId), raised);
+        Assert.Contains(nameof(TaxiPathEditViewModel.IsNameEditable), raised);
+    }
+
+    [Fact]
+    public void ChangingTypeAwayFromParking_KeepsNameAndMakesItEditable()
+    {
+        var nameId = Guid.NewGuid();
+        var segment = new TaxiPathSegment { Type = TaxiPathType.Parking, TaxiNameId = nameId };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.Type = TaxiPathType.Taxi;
+
+        Assert.Equal(nameId, segment.TaxiNameId);
+        Assert.True(vm.IsNameEditable);
+    }
+
+    [Fact]
+    public void DeletingReferencedName_ClearsItEvenOnParkingPath()
+    {
+        var nameId = Guid.NewGuid();
+        var segment = new TaxiPathSegment { Type = TaxiPathType.Parking, TaxiNameId = nameId };
+        var vm = new TaxiPathEditViewModel(segment);
+
+        vm.ClearTaxiNameIfReferencing(nameId);
+
+        Assert.Null(segment.TaxiNameId);
+        Assert.Equal(TaxiPathType.Parking, segment.Type);
+    }
 }

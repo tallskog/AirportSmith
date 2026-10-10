@@ -420,6 +420,27 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void LoadFromFileCommand_AppliesTaxiPathNameRules()
+    {
+        var alpha = new TaxiName { Value = "A" };
+        var blank = new TaxiName { Value = "" };
+        var named = new TaxiPathSegment { Type = TaxiPathType.Path, TaxiNameId = alpha.Id };
+        var runway = new TaxiPathSegment { Type = TaxiPathType.Runway, TaxiNameId = alpha.Id };
+        var airport = new AirportDetails { Icao = "OIBK", TaxiNames = [alpha, blank], TaxiPaths = [named, runway] };
+        var store = new FakeDebugDataStore { AirportToImport = airport, PathToReturn = "OIBK_x.json" };
+        var vm = new MainViewModel(new FakeSimConnectService(), store, new FakeFileDialogService { PathToReturn = "OIBK_x.json" });
+
+        vm.LoadFromFileCommand.Execute(null);
+
+        Assert.Equal(TaxiPathType.Taxi, named.Type);
+        Assert.Null(runway.TaxiNameId);
+
+        // Picking the blank "(no name)" entry in the grid counts as removing the name.
+        vm.TaxiPathEdits[0].TaxiNameId = blank.Id;
+        Assert.Equal(TaxiPathType.Path, named.Type);
+    }
+
+    [Fact]
     public void IsProjectStoreAvailable_FalseWhenNoStoreInjected()
     {
         var vm = new MainViewModel(new FakeSimConnectService());

@@ -666,7 +666,7 @@ public class MainViewModel : ViewModelBase
         Airport = airport;
         Diagram = airport != null ? AirportDiagramProjector.Project(airport) : null;
         AirportDataTree = airport != null ? AirportDataTreeBuilder.Build(airport) : [];
-        TaxiPathEdits = airport != null ? airport.TaxiPaths.Select(t => new TaxiPathEditViewModel(t)).ToList() : [];
+        TaxiPathEdits = airport != null ? airport.TaxiPaths.Select(t => new TaxiPathEditViewModel(t, IsTaxiNameNamed)).ToList() : [];
         RunwayEdits = airport != null ? airport.Runways.Select(r => new RunwayEditViewModel(r)).ToList() : [];
         TaxiwayPointEdits = airport != null ? TaxiwayPointEditViewModel.BuildAll(airport) : [];
         ParkingSpotEdits = airport != null ? ParkingSpotEditViewModel.BuildAll(airport) : [];
@@ -1313,6 +1313,10 @@ public class MainViewModel : ViewModelBase
     // list.
     private string ResolveTaxiNameValue(Guid? taxiNameId) =>
         taxiNameId is { } id ? TaxiNames.FirstOrDefault(n => n.Id == id)?.Value ?? string.Empty : string.Empty;
+
+    // Whether a path's name counts as "named" for TaxiPathNameRules — a path
+    // pointing at the blank "(no name)" entry is unnamed.
+    private bool IsTaxiNameNamed(Guid? taxiNameId) => !string.IsNullOrWhiteSpace(ResolveTaxiNameValue(taxiNameId));
 
     // Same idea as SubscribeTaxiPathEdits, for RunwayEditViewModel's own
     // hide-from-diagram toggle.
@@ -2106,6 +2110,7 @@ public class MainViewModel : ViewModelBase
             return;
         }
 
+        TaxiPathNameRules.NormalizeOnRead(airport);
         SetAirport(airport);
         ErrorMessage = null;
         LastExportPath = null;

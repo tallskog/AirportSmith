@@ -3321,3 +3321,58 @@ tab checkbox **"Flatten airport terrain on export"**
   (now also round-trips ApplyFlatten),
   `Load_OlderFileWithoutDeleteAllTaxiwaySigns_DefaultsFalse` (now also checks
   ApplyFlatten) and `MainViewModelTests.ApplyFlatten_ReflectsAndWritesTheLoadedAirport`.
+
+## Change: taxi path type follows its name (2026-10-10)
+
+**User story:** as a user editing taxiways, I want a taxi path's type to
+follow from whether it has a name. Then I don't have to keep Name and Type
+in sync by hand, and Runway/Parking paths can't pick up a name by mistake.
+
+"Named" means the path's name resolves to a non-blank taxi name. A path
+pointing at the blank "(no name)" entry counts as unnamed. The rules are in
+`TaxiPathNameRules`.
+
+**Acceptance criteria:**
+- Reading an airport from the sim, or from a debug data file (Load from
+  File):
+  - a named Taxi/Path/Unknown path becomes Taxi, and an unnamed one becomes
+    Path;
+  - a Runway path keeps its type, and its name is removed;
+  - a Parking path is left unchanged, name included;
+  - Closed/Vehicle/Road/PaintedLine are left unchanged. Converting an
+    unnamed Vehicle road to Path would let AI aircraft taxi on it.
+- Saved projects are **not** converted on Load Project. They keep the types
+  the user left them with.
+- Editing (the grid's Name picker, the batch-edit popover, applying OSM
+  name suggestions):
+  - giving a Taxi/Path/Unknown path a name makes it Taxi, and removing its
+    name (or picking "(no name)") makes it Path;
+  - a Runway or Parking path's name can't be changed. The grid shows `---`
+    instead of the Name picker, and batch edit and suggestions skip it;
+  - changing a path's type to Runway removes its name. Changing it to
+    Parking keeps the name, hidden and locked. Changing the type back to
+    something else shows the name picker again;
+  - a Closed/Vehicle/Road/PaintedLine path's name stays editable and
+    doesn't change its type;
+  - the type itself can still be picked freely.
+- Deleting a taxi name from the Taxi Names panel still clears it from every
+  path that uses it, Parking paths included, without changing their type.
+
+**Backwards compatibility:** no change to the project file format. Projects
+saved earlier load exactly as saved. A Runway path with a name in an old
+project keeps it until its type or name is edited; the export already leaves
+`name` off RUNWAY paths and warns about it.
+
+**Test coverage:**
+- `TaxiPathNameRulesTests`: named and unnamed conversion for Taxi/Path/
+  Unknown, a blank name counts as unnamed, a Runway path loses its name,
+  Parking and the other types are unchanged.
+- `TaxiPathEditViewModelTests`: naming converts to Taxi, removing the name
+  or picking a blank one converts to Path, Runway/Parking names are locked,
+  other types keep their type, changing to Runway removes the name, changing
+  away from Parking unlocks it, deleting a name clears it on a Parking path.
+- `MainViewModelTests.LoadFromFileCommand_AppliesTaxiPathNameRules`: debug
+  file loads are converted, and picking "(no name)" in the grid converts to
+  Path.
+- Manual: the `---` Name cell for Runway/Parking rows, and the conversion
+  on a live sim load (SimConnect isn't tested automatically).

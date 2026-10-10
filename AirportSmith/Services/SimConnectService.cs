@@ -812,6 +812,7 @@ public class SimConnectService : ISimConnectService
         if (pending is null || data.RequestId != (uint)FacilityReqs.AirportCore) return;
 
         ResolveTaxiPathNames(pending);
+        TaxiPathNameRules.NormalizeOnRead(pending.Details);
         ResolveTaxiPathPoints(pending);
 
         var result = pending.GotAnyData
