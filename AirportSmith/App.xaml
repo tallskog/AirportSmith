@@ -3,11 +3,42 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:AirportSmith"
              xmlns:helpers="clr-namespace:AirportSmith.Helpers"
+             xmlns:models="clr-namespace:AirportSmith.Models"
             >
     <Application.Resources>
         <helpers:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
         <helpers:Point2DToPointConverter x:Key="Point2DToPoint"/>
         <helpers:Point2DListToPointCollectionConverter x:Key="Point2DListToPointCollection"/>
         <helpers:StringListToLinesConverter x:Key="StringListToNewlines"/>
+
+        <!-- One segment of a taxiway sign label (see TaxiwaySignSegment), in the
+             SDK's colors: location yellow on black, mandatory/runway white on
+             red, direction/information/unknown black on yellow. Shared by the
+             diagram's sign plates and the Edit tab's Taxiway Signs preview column. -->
+        <DataTemplate x:Key="TaxiwaySignSegmentTemplate" DataType="{x:Type models:TaxiwaySignSegment}">
+            <Border x:Name="Plate" Background="Gold" BorderBrush="Black" BorderThickness="1" Padding="3,0">
+                <TextBlock x:Name="Text" Text="{Binding DisplayText}" Foreground="Black" FontWeight="Bold" FontSize="11" FontFamily="Consolas"/>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Location">
+                    <Setter TargetName="Plate" Property="Background" Value="Black"/>
+                    <Setter TargetName="Plate" Property="BorderBrush" Value="Gold"/>
+                    <Setter TargetName="Text" Property="Foreground" Value="Gold"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Mandatory">
+                    <Setter TargetName="Plate" Property="Background" Value="Red"/>
+                    <Setter TargetName="Plate" Property="BorderBrush" Value="White"/>
+                    <Setter TargetName="Text" Property="Foreground" Value="White"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Runway">
+                    <Setter TargetName="Plate" Property="Background" Value="Red"/>
+                    <Setter TargetName="Plate" Property="BorderBrush" Value="White"/>
+                    <Setter TargetName="Text" Property="Foreground" Value="White"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+        <ItemsPanelTemplate x:Key="HorizontalItemsPanel">
+            <StackPanel Orientation="Horizontal"/>
+        </ItemsPanelTemplate>
     </Application.Resources>
 </Application>

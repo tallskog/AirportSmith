@@ -47,6 +47,10 @@ public static class EnumOptions
 
     public static readonly IReadOnlyList<TaxiEdgeType> TaxiEdgeTypes = Enum.GetValues<TaxiEdgeType>();
 
+    public static readonly IReadOnlyList<TaxiwaySignSize> TaxiwaySignSizes = Enum.GetValues<TaxiwaySignSize>();
+
+    public static readonly IReadOnlyList<TaxiwaySignJustification> TaxiwaySignJustifications = Enum.GetValues<TaxiwaySignJustification>();
+
     // TaxiPointType has no None/0 member (see its own doc comment) — a
     // leading null entry lets the Taxiway Points grid clear a point back to
     // "never resolved a type", same reasoning as VasiType/ApproachLightSystemType

@@ -469,7 +469,8 @@ public static class AirportDiagramProjector
         }
 
         var (minX, maxX, minZ, maxZ) = ComputeBounds(runways, taxiways, parkingSpots, taxiwayPointsByIndex.Values,
-            vasiWorking.Where(v => v.IsInstalled).SelectMany(v => new[] { v.Position, v.WingA, v.WingB }));
+            vasiWorking.Where(v => v.IsInstalled).SelectMany(v => new[] { v.Position, v.WingA, v.WingB })
+                .Concat(airport.TaxiwaySigns.Select(s => new LocalPoint(s.XMeters, s.ZMeters))));
 
         Point2D ToScreen(LocalPoint p) => new(
             p.X - minX + CanvasMarginMeters,
@@ -558,6 +559,7 @@ public static class AirportDiagramProjector
                 WingBarEnd = ToScreen(v.WingB),
                 IsInstalled = v.IsInstalled,
             }).ToList(),
+            TaxiwaySigns = new(airport.TaxiwaySigns.Select(s => BuildTaxiwaySignShape(s, ToScreen(new LocalPoint(s.XMeters, s.ZMeters))))),
             OriginXMeters = CanvasMarginMeters - minX,
             OriginZMeters = maxZ + CanvasMarginMeters,
             ReferenceLatitude = airport.Latitude,
@@ -728,6 +730,40 @@ public static class AirportDiagramProjector
             ToScreenPoint(diagram, end),
             ToScreenPoint(diagram, midPoint),
             widthCorners.Select(p => ToScreenPoint(diagram, p)).ToList());
+    }
+
+    // A diagram shape for one TaxiwaySign — used by Project, and by
+    // MainViewModel when a sign is added after the initial projection.
+    public static TaxiwaySignShape BuildTaxiwaySignShape(AirportDiagram diagram, TaxiwaySign sign) =>
+        BuildTaxiwaySignShape(sign, ToScreenPoint(diagram, new LocalPoint(sign.XMeters, sign.ZMeters)));
+
+    private static TaxiwaySignShape BuildTaxiwaySignShape(TaxiwaySign sign, Point2D center)
+    {
+        var shape = new TaxiwaySignShape { SignId = sign.Id, Center = center };
+        UpdateTaxiwaySignShape(shape, sign, center);
+        return shape;
+    }
+
+    // Pushes a sign's current position/heading/label onto its existing shape
+    // (a live Edit tab change or a diagram click while placing).
+    public static void RefreshTaxiwaySignShape(AirportDiagram diagram, TaxiwaySignShape shape, TaxiwaySign sign) =>
+        UpdateTaxiwaySignShape(shape, sign, ToScreenPoint(diagram, new LocalPoint(sign.XMeters, sign.ZMeters)));
+
+    private static void UpdateTaxiwaySignShape(TaxiwaySignShape shape, TaxiwaySign sign, Point2D center)
+    {
+        var parsed = TaxiwaySignLabel.Parse(sign.Label);
+        shape.Center = center;
+        shape.HeadingDeg = sign.HeadingDeg;
+        shape.Segments = parsed.Segments;
+        shape.IsValid = parsed.IsValid;
+    }
+
+    // Inverse of a sign's Center: the X/Z meters that put a sign exactly at a
+    // diagram click. Same plane as ComputeParkingBias.
+    public static (double XMeters, double ZMeters) ComputeTaxiwaySignPosition(AirportDiagram diagram, Point2D screenPoint)
+    {
+        var local = ToLocalPoint(diagram, screenPoint);
+        return (local.X, local.Z);
     }
 
     private static Point2D ToScreenPoint(AirportDiagram diagram, LocalPoint p) =>

@@ -732,6 +732,105 @@
                                 </DataGrid.Columns>
                             </DataGrid>
 
+                            <!-- User-authored taxiway signs (see requirements.md, "author taxiway
+                                 signs"). Add Sign arms click-to-place for a new sign; Auto-place
+                                 Signs generates hold-short/intersection/location/runway-exit signs
+                                 for the whole airport, Generate for Selected Points just for the
+                                 selected taxiway points (MainViewModel.RunTaxiwaySignPlanner). -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock Text="Taxiway Signs" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <CheckBox Content="Hide All from Diagram" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          IsChecked="{Binding DataContext.HideAllTaxiwaySigns, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <WrapPanel Margin="0,0,0,4">
+                                <Button Content="Add Sign" Padding="8,1" Margin="0,0,6,2"
+                                        ToolTip="Click the diagram to place a new sign. It starts as a location sign for the nearest named taxiway."
+                                        Command="{Binding DataContext.AddTaxiwaySignCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <Button Content="Auto-place Signs" Padding="8,1" Margin="0,0,6,2"
+                                        ToolTip="Places hold-short, intersection, location and runway exit signs from the taxiway names. Replaces earlier auto-placed signs; signs you placed or edited are kept."
+                                        Command="{Binding DataContext.AutoPlaceTaxiwaySignsCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <Button Content="Generate for Selected Points" Padding="8,1" Margin="0,0,6,2"
+                                        ToolTip="Same as Auto-place Signs, but only for the taxiway points selected on the diagram."
+                                        Command="{Binding DataContext.GenerateTaxiwaySignsForSelectedPointsCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            </WrapPanel>
+                            <TextBlock Margin="0,0,0,2" TextWrapping="Wrap" Text="{Binding DataContext.TaxiwaySignStatus, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            <ItemsControl Margin="0,0,0,4" ItemsSource="{Binding DataContext.TaxiwaySignWarnings, RelativeSource={RelativeSource AncestorType=Window}}"
+                                          Visibility="{Binding DataContext.HasTaxiwaySignWarnings, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat=⚠ {0}}" Foreground="DarkGoldenrod" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <!-- Bound to VisibleTaxiwaySignEdits — clicking sign(s) on the diagram filters
+                                 this down to them, like the Parking grid. Label is typed in the SDK's
+                                 raw sign syntax (e.g. l[A]d[B>]); an invalid one turns red with the
+                                 reason as tooltip, and Preview shows the colored segments. Same
+                                 CanUserDeleteRows=False reasoning as the Parking grid above. -->
+                            <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                      ItemsSource="{Binding DataContext.VisibleTaxiwaySignEdits, RelativeSource={RelativeSource AncestorType=Window}}">
+                                <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="Auto" Width="40" IsReadOnly="True" Binding="{Binding IsAutoPlaced, Mode=OneWay}"/>
+                                    <DataGridTemplateColumn Header="Label" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBox Text="{Binding Label, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas">
+                                                    <TextBox.Style>
+                                                        <Style TargetType="TextBox">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasLabelError}" Value="True">
+                                                                    <Setter Property="Background" Value="#FFFFE0E0"/>
+                                                                    <Setter Property="BorderBrush" Value="Red"/>
+                                                                    <Setter Property="ToolTip" Value="{Binding LabelError}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBox.Style>
+                                                </TextBox>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Preview" Width="Auto" MinWidth="80" IsReadOnly="True">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ItemsControl ItemsSource="{Binding Segments}" VerticalAlignment="Center"
+                                                              ItemTemplate="{StaticResource TaxiwaySignSegmentTemplate}"
+                                                              ItemsPanel="{StaticResource HorizontalItemsPanel}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Size" Width="70">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiwaySignSizes}"
+                                                          SelectedItem="{Binding Size, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Side" Width="65">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{x:Static helpers:EnumOptions.TaxiwaySignJustifications}"
+                                                          SelectedItem="{Binding Justification, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <!-- Free-typed decimals: default LostFocus trigger, same as the Parking grid. -->
+                                    <DataGridTextColumn Header="Heading" Width="65" Binding="{Binding HeadingDeg}"/>
+                                    <DataGridTextColumn Header="X (m)" Width="65" Binding="{Binding XMeters}"/>
+                                    <DataGridTextColumn Header="Z (m)" Width="65" Binding="{Binding ZMeters}"/>
+                                    <DataGridTemplateColumn Header="Pos" Width="55">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="Place"
+                                                        Command="{Binding DataContext.ArmTaxiwaySignPlacementCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
                     <!-- Was one wide DataGrid with ~30 columns (VASI's 4 slots x 5 fields
                          each, 2 approach-light ends x 5 fields each) — reported as tedious
                          to scroll left/right to find a field. Restructured into a compact
@@ -963,7 +1062,9 @@
                             TaxiwayPointClickCommand="{Binding DataContext.ToggleTaxiwayPointSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             VasiPlacementCommand="{Binding DataContext.PlaceVasiCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             ParkingSpotClickCommand="{Binding DataContext.ToggleParkingSpotSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                            ParkingPlacementCommand="{Binding DataContext.PlaceParkingCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            ParkingPlacementCommand="{Binding DataContext.PlaceParkingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwaySignClickCommand="{Binding DataContext.ToggleTaxiwaySignSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            TaxiwaySignPlacementCommand="{Binding DataContext.PlaceTaxiwaySignCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
                         <!-- Same shared toggle as the Diagram tab's checkbox (MainViewModel.ShowMap) —
                              duplicated here so it's reachable without switching tabs; both reflect
@@ -990,6 +1091,12 @@
                                 HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0"
                                 Visibility="{Binding DataContext.IsParkingPlacementArmed, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
                             <TextBlock Text="{Binding DataContext.ParkingPlacementStatusText, RelativeSource={RelativeSource AncestorType=Window}}" Foreground="White"/>
+                        </Border>
+                        <!-- And for adding or moving a taxiway sign (Add Sign / a Taxiway Signs row's Place). -->
+                        <Border Background="#CC000000" CornerRadius="4" Padding="8,4"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0"
+                                Visibility="{Binding DataContext.IsTaxiwaySignPlacementArmed, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding DataContext.TaxiwaySignPlacementStatusText, RelativeSource={RelativeSource AncestorType=Window}}" Foreground="White"/>
                         </Border>
 
                         <!-- Batch-edit popover for the diagram's multi-select — DataContext is

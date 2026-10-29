@@ -101,6 +101,33 @@ public partial class AirportDiagramView : UserControl
         set => SetValue(ParkingSpotClickCommandProperty, value);
     }
 
+    // Click on a taxiway sign plate — see TaxiwaySignShape_MouseLeftButtonDown.
+    // Same Edit-tab-only null-guard convention as TaxiwayClickCommand.
+    public static readonly DependencyProperty TaxiwaySignClickCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwaySignClickCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwaySignClickCommand
+    {
+        get => (ICommand?)GetValue(TaxiwaySignClickCommandProperty);
+        set => SetValue(TaxiwaySignClickCommandProperty, value);
+    }
+
+    // Same idea as VasiPlacementCommand, for adding or moving a taxiway sign
+    // (MainViewModel.PlaceTaxiwaySignCommand). While it's armed, clicks on
+    // taxiways, points, spots and signs aren't consumed by their own handlers
+    // (see IsSignPlacementArmed) — a sign is usually placed right next to or
+    // on a taxiway, so those clicks must reach EndPan as placement clicks.
+    public static readonly DependencyProperty TaxiwaySignPlacementCommandProperty =
+        DependencyProperty.Register(nameof(TaxiwaySignPlacementCommand), typeof(ICommand), typeof(AirportDiagramView));
+
+    public ICommand? TaxiwaySignPlacementCommand
+    {
+        get => (ICommand?)GetValue(TaxiwaySignPlacementCommandProperty);
+        set => SetValue(TaxiwaySignPlacementCommandProperty, value);
+    }
+
+    private bool IsSignPlacementArmed => TaxiwaySignPlacementCommand?.CanExecute(new Point2D(0, 0)) == true;
+
     // Same idea as VasiPlacementCommand, for a parking spot armed via the
     // Parking grid's Place button — tried alongside it in EndPan (at most one
     // of the two is ever armed, see MainViewModel.ArmParkingPlacement).
@@ -163,6 +190,18 @@ public partial class AirportDiagramView : UserControl
         private set => SetValue(TaxiwayPointSelectedStrokeProperty, value);
     }
 
+    // 1 / zoom, applied as a ScaleTransform to each taxiway sign plate so it
+    // keeps a constant on-screen size (like the taxiway point dots) instead
+    // of shrinking to nothing at fit-to-view on a big airport.
+    public static readonly DependencyProperty TaxiwaySignScaleProperty =
+        DependencyProperty.Register(nameof(TaxiwaySignScale), typeof(double), typeof(AirportDiagramView), new PropertyMetadata(1.0));
+
+    public double TaxiwaySignScale
+    {
+        get => (double)GetValue(TaxiwaySignScaleProperty);
+        private set => SetValue(TaxiwaySignScaleProperty, value);
+    }
+
     private void UpdateScreenSizedMarkers()
     {
         var scale = DiagramScale.ScaleX;
@@ -170,6 +209,7 @@ public partial class AirportDiagramView : UserControl
         TaxiwayPointRadius = TaxiwayPointScreenRadius / scale;
         TaxiwayPointStroke = TaxiwayPointScreenStroke / scale;
         TaxiwayPointSelectedStroke = TaxiwayPointSelectedScreenStroke / scale;
+        TaxiwaySignScale = 1 / scale;
     }
 
     // Off by default (see MainViewModel.ShowMap's own doc comment - a
@@ -534,7 +574,9 @@ public partial class AirportDiagramView : UserControl
         // behavior the rest of the time.
         var clickPoint = e!.GetPosition(DiagramCanvas);
         var diagramPoint = new Point2D(clickPoint.X, clickPoint.Y);
-        if (VasiPlacementCommand?.CanExecute(diagramPoint) == true)
+        if (TaxiwaySignPlacementCommand?.CanExecute(diagramPoint) == true)
+            TaxiwaySignPlacementCommand.Execute(diagramPoint);
+        else if (VasiPlacementCommand?.CanExecute(diagramPoint) == true)
             VasiPlacementCommand.Execute(diagramPoint);
         else if (ParkingPlacementCommand?.CanExecute(diagramPoint) == true)
             ParkingPlacementCommand.Execute(diagramPoint);
@@ -564,6 +606,7 @@ public partial class AirportDiagramView : UserControl
     private void TaxiwayShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (TaxiwayClickCommand is null) return;
+        if (IsSignPlacementArmed) return;
         if (sender is not FrameworkElement { DataContext: TaxiwaySegmentShape shape }) return;
 
         var request = new TaxiwaySelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
@@ -579,6 +622,7 @@ public partial class AirportDiagramView : UserControl
     private void TaxiwayPointShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (TaxiwayPointClickCommand is null) return;
+        if (IsSignPlacementArmed) return;
         if (sender is not FrameworkElement { DataContext: TaxiwayPointShape shape }) return;
 
         var request = new TaxiwayPointSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
@@ -597,11 +641,28 @@ public partial class AirportDiagramView : UserControl
     {
         if (ParkingSpotClickCommand is null) return;
         if (ParkingPlacementCommand?.CanExecute(new Point2D(0, 0)) == true) return;
+        if (IsSignPlacementArmed) return;
         if (sender is not FrameworkElement { DataContext: ParkingSpotShape shape }) return;
 
         var request = new ParkingSpotSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
         if (ParkingSpotClickCommand.CanExecute(request))
             ParkingSpotClickCommand.Execute(request);
+        e.Handled = true;
+    }
+
+    // Wired on each taxiway sign plate (see the TaxiwaySigns template) — same
+    // pattern as ParkingSpotShape_MouseLeftButtonDown, including letting the
+    // click through while any placement is armed.
+    private void TaxiwaySignShape_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TaxiwaySignClickCommand is null) return;
+        if (IsSignPlacementArmed || ParkingPlacementCommand?.CanExecute(new Point2D(0, 0)) == true ||
+            VasiPlacementCommand?.CanExecute(new Point2D(0, 0)) == true) return;
+        if (sender is not FrameworkElement { DataContext: TaxiwaySignShape shape }) return;
+
+        var request = new TaxiwaySignSelectionRequest(shape, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        if (TaxiwaySignClickCommand.CanExecute(request))
+            TaxiwaySignClickCommand.Execute(request);
         e.Handled = true;
     }
 }

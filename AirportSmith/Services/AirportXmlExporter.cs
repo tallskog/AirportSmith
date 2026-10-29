@@ -130,6 +130,8 @@ public class AirportXmlExporter : IAirportXmlExporter
         foreach (var (path, xmlType) in exportablePaths)
             airportElement.Add(BuildTaxiwayPath(path, xmlType, taxiNameIndices, warnings));
 
+        AddTaxiwaySigns(airportElement, airport, warnings);
+
         var document = new XDocument(
             new XDeclaration("1.0", "utf-8", null),
             new XElement("FSData", new XAttribute("version", "9.0"), airportElement));
@@ -308,6 +310,42 @@ public class AirportXmlExporter : IAirportXmlExporter
             new XAttribute("lon", F(secondaryLon)),
             new XAttribute("alt", F(r.ElevationMeters)),
             new XAttribute("heading", F((r.HeadingDeg + 180) % 360)));
+    }
+
+    // ---- Taxiway signs -------------------------------------------------
+
+    // One <TaxiwaySign> per user-authored sign (see TaxiwaySign.cs), per
+    // bglcomp.xsd's ctTaxiwaySign: lat/lon only (no biasX/biasZ), converted
+    // from the sign's local meters around the airport reference point. The
+    // sim silently drops a sign with a malformed label, so an invalid one is
+    // skipped with a warning instead of exported as a sign that'd just be
+    // missing in the sim.
+    private static void AddTaxiwaySigns(XElement airportElement, AirportDetails airport, List<string> warnings)
+    {
+        if (airport.TaxiwaySigns.Count == 0) return;
+
+        if (!airport.DeleteAllTaxiwaySigns)
+            warnings.Add("This airport has your own taxiway signs, but the stock signs are kept too, so they may " +
+                "show up twice or with old names — tick \"Delete all default taxiway signs on export\" to remove the stock ones.");
+
+        foreach (var sign in airport.TaxiwaySigns)
+        {
+            if (TaxiwaySignLabel.Validate(sign.Label) is { } error)
+            {
+                warnings.Add($"Taxiway sign \"{sign.Label}\" at X {F(Math.Round(sign.XMeters, 1))}, Z {F(Math.Round(sign.ZMeters, 1))} " +
+                    $"has an invalid label ({error}) and was skipped.");
+                continue;
+            }
+
+            var (lat, lon) = GeoProjection.UnprojectLocalPoint(airport.Latitude, airport.Longitude, sign.XMeters, sign.ZMeters);
+            airportElement.Add(new XElement("TaxiwaySign",
+                new XAttribute("lat", F(lat)),
+                new XAttribute("lon", F(lon)),
+                new XAttribute("heading", F(TaxiwaySignPlanner.NormalizeHeading(sign.HeadingDeg))),
+                new XAttribute("label", sign.Label),
+                new XAttribute("justification", sign.Justification == TaxiwaySignJustification.Right ? "RIGHT" : "LEFT"),
+                new XAttribute("size", $"SIZE{(Enum.IsDefined(sign.Size) ? (int)sign.Size : (int)TaxiwaySignSize.Size3)}")));
+        }
     }
 
     // ---- Taxiways -------------------------------------------------------

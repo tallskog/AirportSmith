@@ -106,6 +106,69 @@ public class AirportXmlExporterTests
     }
 
     [Fact]
+    public void Build_TaxiwaySign_WritesEveryAttributeWithLatLonFromItsPosition()
+    {
+        var airport = Airport(a =>
+        {
+            a.DeleteAllTaxiwaySigns = true;
+            a.TaxiwaySigns.Add(new TaxiwaySign
+            {
+                XMeters = 120, ZMeters = -45, HeadingDeg = -90, Label = "l[A]d[B>]",
+                Justification = TaxiwaySignJustification.Right, Size = TaxiwaySignSize.Size4,
+            });
+        });
+
+        var result = AirportXmlExporter.Build(airport);
+        var sign = Assert.Single(result.Document.Root!.Element("Airport")!.Elements("TaxiwaySign"));
+
+        Assert.Equal("l[A]d[B>]", sign.Attribute("label")!.Value);
+        Assert.Equal("RIGHT", sign.Attribute("justification")!.Value);
+        Assert.Equal("SIZE4", sign.Attribute("size")!.Value);
+        Assert.Equal(270, ParseD(sign.Attribute("heading")!.Value), 6);
+        var (x, z) = GeoProjection.ProjectLatLon(airport.Latitude, airport.Longitude,
+            ParseD(sign.Attribute("lat")!.Value), ParseD(sign.Attribute("lon")!.Value));
+        Assert.Equal(120, x, 3);
+        Assert.Equal(-45, z, 3);
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("taxiway sign", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_TaxiwaySignWithInvalidLabel_IsSkippedWithAWarning()
+    {
+        var airport = Airport(a =>
+        {
+            a.DeleteAllTaxiwaySigns = true;
+            a.TaxiwaySigns.Add(new TaxiwaySign { Label = "l[A]" });
+            a.TaxiwaySigns.Add(new TaxiwaySign { Label = "bogus" });
+        });
+
+        var result = AirportXmlExporter.Build(airport);
+
+        var sign = Assert.Single(result.Document.Root!.Element("Airport")!.Elements("TaxiwaySign"));
+        Assert.Equal("l[A]", sign.Attribute("label")!.Value);
+        Assert.Contains(result.Warnings, w => w.Contains("\"bogus\"") && w.Contains("skipped"));
+    }
+
+    [Fact]
+    public void Build_TaxiwaySignsWithStockSignsKept_WarnsAboutDuplicates()
+    {
+        var airport = Airport(a => a.TaxiwaySigns.Add(new TaxiwaySign { Label = "l[A]" }));
+
+        var result = AirportXmlExporter.Build(airport);
+
+        Assert.Contains(result.Warnings, w => w.Contains("Delete all default taxiway signs on export"));
+    }
+
+    [Fact]
+    public void Build_NoTaxiwaySigns_NoSignElementsOrWarnings()
+    {
+        var result = AirportXmlExporter.Build(Airport());
+
+        Assert.Empty(result.Document.Root!.Element("Airport")!.Elements("TaxiwaySign"));
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("taxiway sign", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Build_DeleteAllTaxiwaySignsEnabled_AddsItToDeleteAirport()
     {
         var airport = Airport(a => a.DeleteAllTaxiwaySigns = true);

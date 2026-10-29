@@ -8,7 +8,7 @@ using AirportSmith.Services;
 
 namespace AirportSmith.ViewModels;
 
-public class MainViewModel : ViewModelBase
+public partial class MainViewModel : ViewModelBase
 {
     private readonly ISimConnectService _simConnect;
     private readonly IDebugDataStore? _debugDataStore;
@@ -635,8 +635,16 @@ public class MainViewModel : ViewModelBase
         DeleteSelectedParkingSpotsCommand = new RelayCommand(DeleteSelectedParkingSpots, () => Diagram != null && Diagram.ParkingSpots.Any(p => p.IsSelected));
         DeleteSelectedTaxiwaySegmentsCommand = new RelayCommand(DeleteSelectedTaxiwaySegments, () => GetEligibleTaxiwaySegmentDeletions().Count > 0);
         DeleteSelectedTaxiwayPointsCommand = new RelayCommand(DeleteSelectedTaxiwayPoints, () => GetEligibleTaxiwayPointDeletions().Count > 0);
+        AddTaxiwaySignCommand = new RelayCommand(ArmAddTaxiwaySign, () => Airport != null && Diagram != null);
+        ArmTaxiwaySignPlacementCommand = new RelayCommand<TaxiwaySignEditViewModel>(ArmTaxiwaySignPlacement, edit => edit != null);
+        PlaceTaxiwaySignCommand = new RelayCommand<Point2D>(PlaceTaxiwaySign, _ => IsTaxiwaySignPlacementArmed);
+        ToggleTaxiwaySignSelectionCommand = new RelayCommand<TaxiwaySignSelectionRequest>(ToggleTaxiwaySignSelection, request => request != null);
+        AutoPlaceTaxiwaySignsCommand = new RelayCommand(AutoPlaceTaxiwaySigns, () => Airport != null);
+        GenerateTaxiwaySignsForSelectedPointsCommand = new RelayCommand(GenerateTaxiwaySignsForSelectedPoints, () => Airport != null && SelectedTaxiwayPointIndices().Count > 0);
+        DeleteSelectedTaxiwaySignsCommand = new RelayCommand(DeleteSelectedTaxiwaySigns, HasTaxiwaySignSelection);
         DeleteSelectedCommand = new RelayCommand(DeleteSelected, () =>
             DeleteSelectedParkingSpotsCommand.CanExecute(null) ||
+            DeleteSelectedTaxiwaySignsCommand.CanExecute(null) ||
             DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null) ||
             DeleteSelectedTaxiwayPointsCommand.CanExecute(null));
         // A single long-lived object (unlike TaxiwayBatchEdit, which is
@@ -716,6 +724,7 @@ public class MainViewModel : ViewModelBase
         SubscribeRunwayEdits();
         SubscribeParkingSpotEdits();
         RefreshTaxiwaySelectionState();
+        ResetTaxiwaySignsForNewAirport();
         // A new airport starts with every Taxi Paths column filter cleared —
         // a filter value typed against the previous airport (e.g. a taxi
         // name that doesn't exist on this one) would otherwise silently
@@ -731,6 +740,7 @@ public class MainViewModel : ViewModelBase
         ClearTaxiwaySelectionCommand.RaiseCanExecuteChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
         PlaceParkingCommand.RaiseCanExecuteChanged();
+        AddTaxiwaySignCommand.RaiseCanExecuteChanged();
     }
 
     // Rebuilds TaxiNames (the shared, user-editable name list backing the
@@ -903,6 +913,7 @@ public class MainViewModel : ViewModelBase
         RaiseVasiPlacementChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
 
+        DisarmTaxiwaySignPlacement();
         _armedParkingPlacement = edit;
         RaiseParkingPlacementChanged();
         PlaceParkingCommand.RaiseCanExecuteChanged();
@@ -978,8 +989,8 @@ public class MainViewModel : ViewModelBase
 
     // Dispatches the Delete key to whichever selection is actually active,
     // in priority order: a parking spot selection wins (the oldest, most
-    // established of the three deletions), then a taxiway path selection,
-    // then a taxiway point selection. The three selections are independent
+    // established of the deletions), then a taxiway sign selection, then a
+    // taxiway path selection, then a taxiway point selection. The three selections are independent
     // (see ToggleTaxiwaySelection/ToggleTaxiwayPointSelection/
     // ToggleParkingSpotSelection's own doc comments — selecting one doesn't
     // clear the others), so more than one COULD be non-empty at once; this
@@ -991,6 +1002,7 @@ public class MainViewModel : ViewModelBase
     private void DeleteSelected()
     {
         if (DeleteSelectedParkingSpotsCommand.CanExecute(null)) DeleteSelectedParkingSpots();
+        else if (DeleteSelectedTaxiwaySignsCommand.CanExecute(null)) DeleteSelectedTaxiwaySigns();
         else if (_taxiPathSelectionFromPoints && DeleteSelectedTaxiwayPointsCommand.CanExecute(null)) DeleteSelectedTaxiwayPoints();
         else if (DeleteSelectedTaxiwaySegmentsCommand.CanExecute(null)) DeleteSelectedTaxiwaySegments();
         else if (DeleteSelectedTaxiwayPointsCommand.CanExecute(null)) DeleteSelectedTaxiwayPoints();
@@ -1463,6 +1475,7 @@ public class MainViewModel : ViewModelBase
             PlaceParkingCommand.RaiseCanExecuteChanged();
         }
 
+        DisarmTaxiwaySignPlacement();
         _armedVasiPlacement = (runwayIndex, slot);
         RaiseVasiPlacementChanged();
         PlaceVasiCommand.RaiseCanExecuteChanged();
@@ -1802,6 +1815,7 @@ public class MainViewModel : ViewModelBase
         RefreshTaxiwayFilter();
         RefreshTaxiwayPointFilter();
         RefreshParkingSpotFilter();
+        ClearTaxiwaySignSelection();
     }
 
     // The Taxi Paths grid's "Clear Filters" button: resets every column

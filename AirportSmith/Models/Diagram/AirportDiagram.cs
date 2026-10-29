@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using AirportSmith.Models;
@@ -420,6 +421,53 @@ public class VasiShape : INotifyPropertyChanged
     }
 }
 
+// One user-authored TaxiwaySign (see TaxiwaySign.cs). Unlike the other
+// shapes, signs are added and deleted all the time while editing, so they're
+// matched to their sign by SignId rather than a list position, and
+// AirportDiagram.TaxiwaySigns is observable so MainViewModel can add/remove
+// one without re-running the whole projection (which would reset
+// zoom/pan/selection). Center/HeadingDeg/Segments/IsValid change live as the
+// sign is edited or placed. The view draws the plate at a constant on-screen
+// size (see AirportDiagramView.TaxiwaySignScale), north-up, with a heading
+// tick rotated by HeadingDeg.
+public class TaxiwaySignShape : INotifyPropertyChanged
+{
+    public required Guid SignId { get; init; }
+
+    private Point2D _center;
+    public required Point2D Center { get => _center; set => SetField(ref _center, value); }
+
+    private double _headingDeg;
+    public double HeadingDeg { get => _headingDeg; set => SetField(ref _headingDeg, value); }
+
+    private IReadOnlyList<TaxiwaySignSegment> _segments = [];
+    public IReadOnlyList<TaxiwaySignSegment> Segments { get => _segments; set => SetField(ref _segments, value); }
+
+    // False for a label the sim wouldn't render (see TaxiwaySignLabel) — drawn
+    // as a red-outlined placeholder so it's easy to spot.
+    private bool _isValid;
+    public bool IsValid { get => _isValid; set => SetField(ref _isValid, value); }
+
+    private bool _isSelected;
+    public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }
+
+    private bool _isVisible = true;
+    public bool IsVisible { get => _isVisible; set => SetField(ref _isVisible, value); }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
+    }
+}
+
+// Same idea as ParkingSpotSelectionRequest, for a click on a TaxiwaySignShape.
+public sealed record TaxiwaySignSelectionRequest(TaxiwaySignShape Shape, bool ExtendSelection);
+
 public class AirportDiagram
 {
     public double CanvasWidth { get; init; }
@@ -429,6 +477,7 @@ public class AirportDiagram
     public List<ParkingSpotShape> ParkingSpots { get; init; } = [];
     public List<TaxiwayPointShape> TaxiwayPoints { get; init; } = [];
     public List<VasiShape> VasiLights { get; init; } = [];
+    public ObservableCollection<TaxiwaySignShape> TaxiwaySigns { get; init; } = [];
 
     // Local-meters -> screen-space offsets captured from this projection's
     // own bounds (see AirportDiagramProjector.Project's ToScreen local

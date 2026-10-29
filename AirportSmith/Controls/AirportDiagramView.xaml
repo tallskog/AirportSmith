@@ -428,6 +428,73 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <!-- User-authored taxiway signs (TaxiwaySignShape), drawn last so a plate
+                 stays clickable on top of everything. Each is a dot at the sign's exact
+                 position, a tick pointing along its HeadingDeg (north-up diagram, so a
+                 RotateTransform of the "up" tick by the compass heading is exact), and
+                 the label's colored segments just above-right of the dot. The inner
+                 Canvas is scaled by 1/zoom (AirportDiagramView.TaxiwaySignScale) so all
+                 of it keeps a constant on-screen size. Positioned via Canvas.Left/Top on
+                 a child of the template root (like the ParkingSpots label), not the root
+                 itself — see the TaxiwayPoints comment above for why. An invalid label
+                 gets a red outline and a "!" so it's easy to spot. -->
+            <ItemsControl ItemsSource="{Binding TaxiwaySigns}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Canvas Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
+                            <Canvas Canvas.Left="{Binding Center.X}" Canvas.Top="{Binding Center.Y}"
+                                    MouseLeftButtonDown="TaxiwaySignShape_MouseLeftButtonDown">
+                                <Canvas.RenderTransform>
+                                    <ScaleTransform ScaleX="{Binding TaxiwaySignScale, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"
+                                                    ScaleY="{Binding TaxiwaySignScale, RelativeSource={RelativeSource AncestorType=local:AirportDiagramView}}"/>
+                                </Canvas.RenderTransform>
+                                <Line X1="0" Y1="0" X2="0" Y2="-14" Stroke="Black" StrokeThickness="2">
+                                    <Line.RenderTransform>
+                                        <RotateTransform Angle="{Binding HeadingDeg}"/>
+                                    </Line.RenderTransform>
+                                </Line>
+                                <Ellipse Width="6" Height="6" Canvas.Left="-3" Canvas.Top="-3" Fill="Black"/>
+                                <Border Canvas.Left="5" Canvas.Top="-22" BorderThickness="2" Background="White">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="BorderBrush" Value="Transparent"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsValid}" Value="False">
+                                                    <Setter Property="BorderBrush" Value="Red"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="DodgerBlue"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel Orientation="Horizontal">
+                                        <ItemsControl ItemsSource="{Binding Segments}"
+                                                      ItemTemplate="{StaticResource TaxiwaySignSegmentTemplate}"
+                                                      ItemsPanel="{StaticResource HorizontalItemsPanel}"/>
+                                        <TextBlock Text="!" Foreground="Red" FontWeight="Bold" Padding="3,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsValid}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </Canvas>
+                        </Canvas>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </Canvas>
 
         <!-- OSM's tile usage policy requires attribution to be visible

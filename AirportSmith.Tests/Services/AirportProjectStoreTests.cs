@@ -428,4 +428,104 @@ public class AirportProjectStoreTests
             Directory.Delete(baseDir, recursive: true);
         }
     }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsTaxiwaySigns()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var store = new AirportProjectStore(baseDir);
+            var sign = new TaxiwaySign
+            {
+                XMeters = 12.5, ZMeters = -40, HeadingDeg = 270, Label = "l[A]m[09-27]",
+                Justification = TaxiwaySignJustification.Right, Size = TaxiwaySignSize.Size5,
+                IsAutoPlaced = true, AnchorPointIndex = 17,
+            };
+            var airport = new AirportDetails { Icao = "EFHK" };
+            airport.TaxiwaySigns.Add(sign);
+            store.Save(airport);
+
+            var loaded = Assert.Single(store.Load("EFHK")!.TaxiwaySigns);
+            Assert.Equal(sign.Id, loaded.Id);
+            Assert.Equal(12.5, loaded.XMeters);
+            Assert.Equal(-40, loaded.ZMeters);
+            Assert.Equal(270, loaded.HeadingDeg);
+            Assert.Equal("l[A]m[09-27]", loaded.Label);
+            Assert.Equal(TaxiwaySignJustification.Right, loaded.Justification);
+            Assert.Equal(TaxiwaySignSize.Size5, loaded.Size);
+            Assert.True(loaded.IsAutoPlaced);
+            Assert.Equal(17, loaded.AnchorPointIndex);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // A project saved before taxiway signs existed has no TaxiwaySigns list:
+    // it must load as an empty list with every other value intact.
+    [Fact]
+    public void Load_OlderFileWithoutTaxiwaySigns_LoadsEmptyListAndKeepsEverythingElse()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "EFHK.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": {
+                        "Icao": "EFHK", "Name": "Helsinki-Vantaa", "DeleteAllTaxiwaySigns": true,
+                        "TaxiNames": [ { "Id": "8c1e1f3e-4d55-4f7a-9a43-0d6c2f3a1b11", "Value": "A" } ],
+                        "TaxiPaths": [ { "TaxiNameId": "8c1e1f3e-4d55-4f7a-9a43-0d6c2f3a1b11", "Type": 1 } ]
+                    }
+                }
+                """);
+
+            var loaded = new AirportProjectStore(baseDir).Load("EFHK")!;
+
+            Assert.NotNull(loaded.TaxiwaySigns);
+            Assert.Empty(loaded.TaxiwaySigns);
+            Assert.Equal("Helsinki-Vantaa", loaded.Name);
+            Assert.True(loaded.DeleteAllTaxiwaySigns);
+            Assert.Equal("A", Assert.Single(loaded.TaxiNames).Value);
+            Assert.Equal(loaded.TaxiNames[0].Id, Assert.Single(loaded.TaxiPaths).TaxiNameId);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // A sign written without Size/Justification (hand-edited file) still
+    // loads as a valid sign: the Scenery Editor's default size, left side.
+    [Fact]
+    public void Load_TaxiwaySignMissingSizeAndSide_DefaultsToSize3Left()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "EFHK.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": { "Icao": "EFHK", "TaxiwaySigns": [ { "Label": "l[A]", "XMeters": 5 } ] }
+                }
+                """);
+
+            var sign = Assert.Single(new AirportProjectStore(baseDir).Load("EFHK")!.TaxiwaySigns);
+
+            Assert.Equal(TaxiwaySignSize.Size3, sign.Size);
+            Assert.Equal(TaxiwaySignJustification.Left, sign.Justification);
+            Assert.False(sign.IsAutoPlaced);
+            Assert.Equal(5, sign.XMeters);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
 }

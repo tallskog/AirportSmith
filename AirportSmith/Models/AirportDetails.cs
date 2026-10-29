@@ -20,6 +20,10 @@ public class AirportDetails
     // TaxiName.cs for why references use a stable Id rather than list position.
     public List<TaxiName> TaxiNames { get; set; } = [];
 
+    // User-authored signs, not sim data — see TaxiwaySign.cs. Empty for a
+    // fresh SimConnect load and for a project saved before signs existed.
+    public List<TaxiwaySign> TaxiwaySigns { get; set; } = [];
+
     // User export option, not sim data (SimConnect never sets it): when true,
     // the exported XML's <DeleteAirport> also carries deleteAllTaxiwaySigns=
     // "TRUE". The stock airport's taxiway signs are separate objects that

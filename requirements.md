@@ -31,7 +31,7 @@ The core idea — take a default MSFS 2024 airport and produce an edited "new ve
 1. **SimConnect Facility Data (live, from a running sim)** — runways, taxiway/parking network, frequencies, navaids, tower. Works for streamed airports. Misses ground-poly/apron visuals, buildings/scenery objects, newest 2024-only parking fields, and taxiway signs entirely (no Facility Data type exists for them).
 2. **BGL/XML decompilation (ADE-style, offline)** — currently broken for native 2024 airport BGLs; only reliable via the 2020-data workaround.
 
-**Non-goals for v0.1** (explicitly out of scope until re-evaluated): ground/apron visual polygons, static scenery objects/buildings, taxiway signs (no extraction path exists via either strategy), and any 2024-only taxiway/parking fields not exposed via Facility Data.
+**Non-goals for v0.1** (explicitly out of scope until re-evaluated): ground/apron visual polygons, static scenery objects/buildings, *extracting* taxiway signs (no extraction path exists via either strategy — signs can instead be authored in AirportSmith, see "New feature: author taxiway signs" below), and any 2024-only taxiway/parking fields not exposed via Facility Data.
 
 ## v0.1 — Extract & display airport data from a running sim (committed)
 
@@ -3376,3 +3376,131 @@ project keeps it until its type or name is edited; the export already leaves
   Path.
 - Manual: the `---` Name cell for Runway/Parking rows, and the conversion
   on a live sim load (SimConnect isn't tested automatically).
+
+## New feature: author taxiway signs — manual and automatic placement (2026-10-29)
+
+SimConnect can't read taxiway signs (see Background, "Confirmed hard gap"),
+so they can't be imported. This feature lets the user author their own
+signs instead and exports them as `<TaxiwaySign>` elements.
+
+**User stories:**
+- As a user, I want to place a taxiway sign anywhere on the diagram and set
+  its text, heading, size and side, so I can sign intersections and holding
+  points by hand.
+- As a user who has named the taxiways, I want AirportSmith to place the
+  signs for me, either for the whole airport or just for the taxiway points
+  I've selected, and then adjust them by hand.
+
+**Schema** (checked against the local MSFS 2024 SDK's `Tools/bin/bglcomp.xsd`,
+`ctTaxiwaySign`): `<TaxiwaySign lat lon heading label justification size/>`
+directly under `<Airport>`. `heading` is −360..360, `justification` is
+`LEFT`/`RIGHT`, `size` is `SIZE1`..`SIZE5` (Scenery Editor default 3).
+Label grammar, per the SDK's Scenery Editor "TaxiwaySign Objects" page: each
+segment starts with a sign-type letter (`l` location, `d` direction,
+`m` mandatory, `i` information, `r` runway, `u` unknown) followed by content
+characters (`A`–`Z`, `0`–`9`, `_`, space, `-`, `>`, `<`, `^`, `v`, `'`,
+`` ` ``, `/`, `\`, `[`, `]`, `|`). At most 17 content symbols per sign; the
+type letters don't count. The sim doesn't render a sign with a malformed
+label.
+
+**Unconfirmed:** exactly which way `heading` points relative to the sign face,
+and how `justification` flips it. Working assumption: `heading` is the
+direction of travel of the aircraft reading the sign, and `justification` is
+the side of the taxiway the sign stands on. This needs checking with a
+Scenery Editor import. The conversion lives in one place, so a correction
+is a one-line fix.
+
+**Acceptance criteria — data and export:**
+- Signs are stored per airport in `AirportDetails.TaxiwaySigns` (local X/Z
+  meters, the same plane as parking spots) and saved with the project.
+- Export Airport XML writes one `<TaxiwaySign>` per sign after the taxiway
+  paths, with lat/lon converted from X/Z the same way as `<RunwayStart>`,
+  heading normalized to 0..360.
+- A sign with an invalid label is skipped, with an export warning naming it.
+- If there are signs and "Delete all default taxiway signs on export" is
+  off, the export warns that the stock signs are kept and may duplicate
+  them. The checkbox itself is never changed automatically.
+- An airport with no signs exports exactly as before this feature.
+
+**Acceptance criteria — manual editing (Edit tab):**
+- A Taxiway Signs grid lists every sign: Auto (read-only), Label (with an
+  inline error for an invalid label), a colored preview, Size, Side,
+  Heading, X, Z, and a Place button.
+- **Add Sign** arms click-to-place. The click creates a sign at that spot,
+  pre-filled as a location sign for the nearest named taxi path (`l[A]`)
+  with its heading along that path. With no named path nearby the label
+  starts empty (and shows as an error until filled in).
+- Each row's **Place** button moves that sign to the next diagram click.
+  Only one click-to-place mode (VASI, parking, sign) is armed at a time.
+- Signs are drawn on the diagram as small plates colored per segment
+  (location: yellow on black; direction/information/unknown: black on
+  yellow; mandatory/runway: white on red) with a heading tick, and stay the
+  same size on screen as you zoom. Clicking one (Ctrl+click for several)
+  selects it and filters the grid. **Delete** removes the selected signs
+  after a confirmation. **Hide All from Diagram** hides them (display only).
+- The Airport Data tab lists every sign's fields.
+
+**Acceptance criteria — automatic placement** (following FAA AIM 2-3;
+**Auto-place Signs** does the whole airport, **Generate for Selected Points**
+only the selected taxiway points):
+- **Hold-short signs:** at each hold-short point, on the left of the leg
+  approaching the runway: the taxiway's location sign and the runway's
+  mandatory sign, e.g. `l[A]m[09-27]`. The runway end on the reader's left is
+  listed first. ILS hold-short points get `m[ILS]` instead. With no taxi
+  name on the approach leg, only the mandatory sign is placed.
+- **Intersection direction signs:** before a junction where taxiways with
+  different names meet, on the left of each approach leg: the location sign
+  in the middle, left turns to its left and right turns to its right, each
+  with an arrow matching the turn, e.g. `d[B<]l[A]d[C>]`. Branches with the
+  same name as the approach, or no name, are left out. Arrays over 17
+  symbols are trimmed, with a warning.
+- **Location signs after junctions:** a short way down each named branch
+  leaving a junction with differently named taxiways, `l[B]`.
+- **Runway exit signs:** for each taxiway leaving a runway, a direction
+  sign (`d[A>]`/`d[A<]`, or `'`/`` ` `` for an acute high-speed exit) on the
+  exit's side of the runway, before the exit, for each landing direction
+  the exit can be taken from (turn of 90° or less).
+- Generated signs are marked Auto. Editing or moving an Auto sign turns it
+  into a manual one.
+- Running auto-placement again replaces the existing Auto signs (only those
+  at the selected points, for Generate for Selected Points) and keeps every
+  manual or edited sign. A confirmation prompt asks first whenever Auto
+  signs would be replaced.
+
+**Backwards compatibility:** adds a new list to the project JSON. A project
+or debug file from before this feature has no `TaxiwaySigns` and loads with
+an empty list; nothing else is reset. A sign missing its Size loads as
+Size 3 and one missing its Side as Left. No schema version bump. A fresh
+SimConnect load starts with no signs.
+
+**Test coverage:**
+- `TaxiwaySignLabelTests`: the SDK page's examples parse, the 17-symbol
+  limit, unknown characters, missing type letter, empty segments, building
+  labels from taxi names.
+- `TaxiwaySignPlannerTests` (small hand-built airports): hold-short label
+  and runway designator order from both directions, ILS hold-short,
+  T-junction array ordering and arrows, location sign after a junction,
+  runway exit for one direction only (acute) and both directions (90°),
+  the setback walking through intermediate points, trimming an
+  over-long array, restricting to selected points, offsets and heading;
+  merging keeps manual/edited signs and replaces only the relevant Auto
+  ones; the starting label for a manually added sign.
+- `AirportXmlExporterTests`: `<TaxiwaySign>` attributes and lat/lon,
+  invalid label skipped with a warning, the stock-signs warning, no signs
+  means no change.
+- `AirportProjectStoreTests`: signs round-trip; an older file without
+  `TaxiwaySigns` loads an empty list with everything else intact; a sign
+  missing Size/Side loads as Size 3/Left (temp folder, never the real
+  AppData).
+- `TaxiwaySignEditViewModelTests`: every edit clears Auto, setting the same
+  value doesn't, label error and preview.
+- `MainViewModelTaxiwaySignTests`: placing a new sign (near a taxiway and
+  away from one), moving one with Place, label edits updating the diagram,
+  auto-placement re-run with the confirmation accepted and declined,
+  Generate for Selected Points, selecting/filtering and deleting signs
+  (accepted and declined), Hide All, rebuilding on project load, only one
+  placement mode armed at a time, clearing the diagram selection.
+- An exporter-format `<TaxiwaySign>` sample was validated against the local
+  `bglcomp.xsd` (0 errors).
+- Manual: diagram rendering, and how signs look and face in the sim after a
+  Scenery Editor import.
