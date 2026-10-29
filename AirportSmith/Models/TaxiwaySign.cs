@@ -9,9 +9,12 @@ namespace AirportSmith.Models;
 // only at export time (AirportXmlExporter).
 //
 // Label uses the SDK's sign grammar (see TaxiwaySignLabel). HeadingDeg and
-// Justification follow requirements.md's working assumption — heading is the
-// reader's direction of travel, justification the side of the taxiway the
-// sign stands on — which is UNCONFIRMED against a Scenery Editor import.
+// Justification are stored exactly as <TaxiwaySign> wants them, matching the
+// Scenery Editor's own values: justification is the side of the taxiway the
+// sign stands on, heading the reader's travel direction turned 90° toward
+// the taxiway (+90 LEFT, −90 RIGHT; see TaxiwaySignPlanner.SignFacing).
+// Project schema v2 files stored the plain travel direction; the v3 load
+// migration in AirportProjectStore converts them.
 //
 // IsAutoPlaced marks a sign TaxiwaySignPlanner generated and the user hasn't
 // touched since: re-running auto-placement replaces those and keeps every

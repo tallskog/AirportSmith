@@ -431,7 +431,8 @@
 
             <!-- User-authored taxiway signs (TaxiwaySignShape), drawn last so a plate
                  stays clickable on top of everything. Each is a dot at the sign's exact
-                 position, a tick pointing along its HeadingDeg (north-up diagram, so a
+                 position, a tick pointing along its HeadingDeg — the SDK heading, which
+                 points from the sign toward the taxiway it faces (north-up diagram, so a
                  RotateTransform of the "up" tick by the compass heading is exact), and
                  the label's colored segments just above-right of the dot. The inner
                  Canvas is scaled by 1/zoom (AirportDiagramView.TaxiwaySignScale) so all

@@ -62,7 +62,7 @@ public class MainViewModelTaxiwaySignTests
 
         var sign = Assert.Single(vm.Airport!.TaxiwaySigns);
         Assert.Equal("l[A]", sign.Label);
-        Assert.Equal(180, sign.HeadingDeg, 1);
+        Assert.Equal(270, sign.HeadingDeg, 1);
         Assert.Equal(5, sign.XMeters, 2);
         Assert.Equal(150, sign.ZMeters, 2);
         Assert.False(sign.IsAutoPlaced);

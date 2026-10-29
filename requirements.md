@@ -3403,12 +3403,14 @@ characters (`A`–`Z`, `0`–`9`, `_`, space, `-`, `>`, `<`, `^`, `v`, `'`,
 type letters don't count. The sim doesn't render a sign with a malformed
 label.
 
-**Unconfirmed:** exactly which way `heading` points relative to the sign face,
-and how `justification` flips it. Working assumption: `heading` is the
-direction of travel of the aircraft reading the sign, and `justification` is
-the side of the taxiway the sign stands on. This needs checking with a
-Scenery Editor import. The conversion lives in one place, so a correction
-is a one-line fix.
+**Heading and justification (confirmed 2026-10-29)** by a Scenery Editor
+import of an OIFM export, where every v0.3.0 sign had to be turned 90°:
+`justification` is the side of the taxiway the sign stands on, and `heading`
+is the reading aircraft's direction of travel turned 90° toward the taxiway:
+travel + 90° for a `LEFT` sign, travel − 90° for a `RIGHT` one. v0.3.0
+exported the plain travel direction (the earlier, unconfirmed assumption).
+The app stores and shows the SDK value, so the grid's Heading matches what
+the Scenery Editor shows.
 
 **Acceptance criteria — data and export:**
 - Signs are stored per airport in `AirportDetails.TaxiwaySigns` (local X/Z
@@ -3428,7 +3430,7 @@ is a one-line fix.
   Heading, X, Z, and a Place button.
 - **Add Sign** arms click-to-place. The click creates a sign at that spot,
   pre-filled as a location sign for the nearest named taxi path (`l[A]`)
-  with its heading along that path. With no named path nearby the label
+  facing traffic along that path from its left side. With no named path nearby the label
   starts empty (and shows as an error until filled in).
 - Each row's **Place** button moves that sign to the next diagram click.
   Only one click-to-place mode (VASI, parking, sign) is armed at a time.
@@ -3470,8 +3472,13 @@ only the selected taxiway points):
 **Backwards compatibility:** adds a new list to the project JSON. A project
 or debug file from before this feature has no `TaxiwaySigns` and loads with
 an empty list; nothing else is reset. A sign missing its Size loads as
-Size 3 and one missing its Side as Left. No schema version bump. A fresh
-SimConnect load starts with no signs.
+Size 3 and one missing its Side as Left. A fresh SimConnect load starts
+with no signs.
+
+Project schema v3 (heading fix): a v2 project file (saved by v0.3.0) has its
+sign headings turned on load, +90° for Left and −90° for Right signs, so they
+export facing the right way without being re-placed. Nothing else in the
+file changes, and v3 files are loaded as they are.
 
 **Test coverage:**
 - `TaxiwaySignLabelTests`: the SDK page's examples parse, the 17-symbol
@@ -3490,8 +3497,9 @@ SimConnect load starts with no signs.
   means no change.
 - `AirportProjectStoreTests`: signs round-trip; an older file without
   `TaxiwaySigns` loads an empty list with everything else intact; a sign
-  missing Size/Side loads as Size 3/Left (temp folder, never the real
-  AppData).
+  missing Size/Side loads as Size 3/Left; a v2 file's sign headings are
+  turned ±90° by side, while a v3 file's are left alone (temp folder, never
+  the real AppData).
 - `TaxiwaySignEditViewModelTests`: every edit clears Auto, setting the same
   value doesn't, label error and preview.
 - `MainViewModelTaxiwaySignTests`: placing a new sign (near a taxiway and

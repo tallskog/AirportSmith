@@ -18,7 +18,7 @@ namespace AirportSmith.Services;
 // touch the real dev AppData folder, per CLAUDE.md's data-safety guardrail.
 public class AirportProjectStore : IAirportProjectStore
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
 
     private readonly string _projectsDirectory;
@@ -55,6 +55,7 @@ public class AirportProjectStore : IAirportProjectStore
             if (file is null) return null;
 
             MigrateLegacyTaxiNames(file.Airport, json);
+            if (file.SchemaVersion < 3) MigrateTaxiwaySignHeadings(file.Airport);
             return file.Airport;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -79,6 +80,16 @@ public class AirportProjectStore : IAirportProjectStore
     // legacy name strings become one shared TaxiName each, which also
     // restores the "multiple paths share one taxiway name" relationship that
     // flattening to a per-segment string had broken in the first place.
+    // Schema v2 (v0.3.0) stored a sign's heading as the reader's direction
+    // of travel; a Scenery Editor import showed <TaxiwaySign heading> is that
+    // turned 90° toward the taxiway. Turn v2 signs the same way so they keep
+    // facing where they did on the diagram and export correctly.
+    private static void MigrateTaxiwaySignHeadings(AirportDetails airport)
+    {
+        foreach (var sign in airport.TaxiwaySigns)
+            sign.HeadingDeg = Math.Round(TaxiwaySignPlanner.NormalizeHeading(sign.HeadingDeg + TaxiwaySignPlanner.SideTurnDeg(sign.Justification)), 1);
+    }
+
     private static void MigrateLegacyTaxiNames(AirportDetails airport, string json)
     {
         if (airport.TaxiNames.Count > 0) return; // already v2-shaped

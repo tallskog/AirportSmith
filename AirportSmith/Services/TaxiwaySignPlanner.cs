@@ -22,9 +22,7 @@ public sealed record TaxiwaySignPlan(IReadOnlyList<TaxiwaySign> Signs, IReadOnly
 // Geometry is in the local-meters plane (X east, Z north, heading 0 = +Z),
 // the same as TaxiPathSegment's resolved coordinates. Every generated sign
 // is IsAutoPlaced with AnchorPointIndex set to the taxi point it belongs to.
-// Heading/Justification follow requirements.md's UNCONFIRMED working
-// assumption — see SignFacing, the one place to change if a Scenery Editor
-// import shows otherwise.
+// Heading/Justification are the SDK's own convention — see SignFacing.
 public static class TaxiwaySignPlanner
 {
     // Sign distance beyond the pavement edge. FAA AC 150/5340-18 places
@@ -147,7 +145,8 @@ public static class TaxiwaySignPlanner
 
     // A manual sign's starting label/heading (Edit tab "Add Sign"): a location
     // sign for the nearest named Taxi/Path path within maxDistanceMeters,
-    // heading along it. Null when no named path is that close.
+    // facing traffic along it from its left side. Null when no named path is
+    // that close.
     public static (string Label, double HeadingDeg)? SuggestLocationSign(AirportDetails airport, double xMeters, double zMeters, double maxDistanceMeters = 60)
     {
         var names = airport.TaxiNames.ToDictionary(n => n.Id, n => TaxiwaySignLabel.SanitizeName(n.Value));
@@ -377,10 +376,17 @@ public static class TaxiwaySignPlanner
 
     // The one place mapping "read by traffic travelling `travel`, standing on
     // `side` of it" to the <TaxiwaySign> heading/justification attributes.
-    // Working assumption (requirements.md, UNCONFIRMED): heading is the
-    // reader's direction of travel, justification the side.
+    // Confirmed against a Scenery Editor import (OIFM, 2026-10-29): heading
+    // is the reader's travel direction turned 90° toward the taxiway — +90
+    // for a LEFT sign, −90 for a RIGHT one — and justification is the side.
     private static (double HeadingDeg, TaxiwaySignJustification Justification) SignFacing(Vec travel, TaxiwaySignJustification side) =>
-        (NormalizeHeading(Math.Atan2(travel.X, travel.Z) * 180 / Math.PI), side);
+        (NormalizeHeading(Math.Atan2(travel.X, travel.Z) * 180 / Math.PI + SideTurnDeg(side)), side);
+
+    // How far the SDK heading is turned from the reader's travel direction.
+    // AirportProjectStore's schema v3 migration applies the same turn to
+    // signs saved before this convention was confirmed.
+    public static double SideTurnDeg(TaxiwaySignJustification side) =>
+        side == TaxiwaySignJustification.Right ? -90 : 90;
 
     public static double NormalizeHeading(double deg) => ((deg % 360) + 360) % 360;
 

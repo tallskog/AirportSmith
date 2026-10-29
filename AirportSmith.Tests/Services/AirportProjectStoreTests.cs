@@ -528,4 +528,61 @@ public class AirportProjectStoreTests
             Directory.Delete(baseDir, recursive: true);
         }
     }
+
+    // v0.3.0 (schema v2) stored the reader's travel direction; the SDK heading
+    // is that turned 90° toward the taxiway (+90 Left, −90 Right).
+    [Fact]
+    public void Load_SchemaV2TaxiwaySigns_TurnsHeadingsBySide_AndKeepsTheRest()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var projectsDir = Path.Combine(baseDir, "Projects");
+            Directory.CreateDirectory(projectsDir);
+            File.WriteAllText(Path.Combine(projectsDir, "EFHK.json"), """
+                {
+                    "SchemaVersion": 2,
+                    "Airport": { "Icao": "EFHK", "Name": "Helsinki-Vantaa", "TaxiwaySigns": [
+                        { "Label": "l[A]", "HeadingDeg": 348.1, "Justification": 0, "XMeters": 5, "IsAutoPlaced": true, "AnchorPointIndex": 3 },
+                        { "Label": "d[B>]", "HeadingDeg": 77.9, "Justification": 1, "Size": 2 }
+                    ] }
+                }
+                """);
+
+            var loaded = new AirportProjectStore(baseDir).Load("EFHK")!;
+
+            Assert.Equal(78.1, loaded.TaxiwaySigns[0].HeadingDeg, 6);
+            Assert.Equal(347.9, loaded.TaxiwaySigns[1].HeadingDeg, 6);
+            Assert.Equal("l[A]", loaded.TaxiwaySigns[0].Label);
+            Assert.Equal(5, loaded.TaxiwaySigns[0].XMeters);
+            Assert.True(loaded.TaxiwaySigns[0].IsAutoPlaced);
+            Assert.Equal(3, loaded.TaxiwaySigns[0].AnchorPointIndex);
+            Assert.Equal(TaxiwaySignSize.Size2, loaded.TaxiwaySigns[1].Size);
+            Assert.Equal("Helsinki-Vantaa", loaded.Name);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SaveThenLoad_CurrentSchema_DoesNotTurnSignHeadingsAgain()
+    {
+        var baseDir = CreateTempDirectory();
+        try
+        {
+            var store = new AirportProjectStore(baseDir);
+            var airport = new AirportDetails { Icao = "EFHK" };
+            airport.TaxiwaySigns.Add(new TaxiwaySign { Label = "l[A]", HeadingDeg = 78.1 });
+            store.Save(airport);
+            store.Save(store.Load("EFHK")!);
+
+            Assert.Equal(78.1, Assert.Single(store.Load("EFHK")!.TaxiwaySigns).HeadingDeg);
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
 }

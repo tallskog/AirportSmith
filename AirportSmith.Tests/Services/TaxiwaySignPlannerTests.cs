@@ -80,13 +80,13 @@ public class TaxiwaySignPlannerTests
         // Southbound on A: its left is east, where the 27 end is.
         var a = Assert.Single(signs, s => s.AnchorPointIndex == 2);
         Assert.Equal("l[A]m[27-09]", a.Label);
-        AssertAt(a, 16, 80, 180);
+        AssertAt(a, 16, 80, 270); // travel 180, Left: +90
         Assert.Equal(TaxiwaySignJustification.Left, a.Justification);
 
         // Northbound on B: its left is west, where the 09 end is.
         var b = Assert.Single(signs, s => s.AnchorPointIndex == 5);
         Assert.Equal("l[B]m[09-27]", b.Label);
-        AssertAt(b, 284, -80, 0);
+        AssertAt(b, 284, -80, 90);
     }
 
     [Fact]
@@ -147,19 +147,19 @@ public class TaxiwaySignPlannerTests
         Assert.All(arrays, s => Assert.Equal(2, s.AnchorPointIndex));
 
         // Eastbound on A: B is a left turn, so it goes left of the location sign.
-        var eastbound = Assert.Single(arrays, s => s.HeadingDeg == 90);
+        var eastbound = Assert.Single(arrays, s => s.HeadingDeg == 180);
         Assert.Equal("d[<B]l[A]", eastbound.Label);
-        AssertAt(eastbound, -30, 16, 90);
+        AssertAt(eastbound, -30, 16, 180);
 
         // Westbound on A: B is a right turn.
-        var westbound = Assert.Single(arrays, s => s.HeadingDeg == 270);
+        var westbound = Assert.Single(arrays, s => s.HeadingDeg == 0);
         Assert.Equal("l[A]d[B>]", westbound.Label);
-        AssertAt(westbound, 30, -16, 270);
+        AssertAt(westbound, 30, -16, 0);
 
         // Southbound on B: A both ways, left turn first (clockwise order).
-        var southbound = Assert.Single(arrays, s => s.HeadingDeg == 180);
+        var southbound = Assert.Single(arrays, s => s.HeadingDeg == 270);
         Assert.Equal("d[<A]l[B]d[A>]", southbound.Label);
-        AssertAt(southbound, 16, 30, 180);
+        AssertAt(southbound, 16, 30, 270);
     }
 
     [Fact]
@@ -168,11 +168,11 @@ public class TaxiwaySignPlannerTests
         var locations = TaxiwaySignPlanner.Plan(TJunctionAirport()).Signs.Where(s => !s.Label.Contains("d[")).ToList();
 
         Assert.Equal(3, locations.Count);
-        AssertAt(Assert.Single(locations, s => s.HeadingDeg == 270), -40, -16, 270); // westbound on A, left = south
-        AssertAt(Assert.Single(locations, s => s.HeadingDeg == 90), 40, 16, 90);
-        var north = Assert.Single(locations, s => s.HeadingDeg == 0);
+        AssertAt(Assert.Single(locations, s => s.HeadingDeg == 0), -40, -16, 0); // westbound on A, left = south
+        AssertAt(Assert.Single(locations, s => s.HeadingDeg == 180), 40, 16, 180);
+        var north = Assert.Single(locations, s => s.HeadingDeg == 90);
         Assert.Equal("l[B]", north.Label);
-        AssertAt(north, -16, 40, 0);
+        AssertAt(north, -16, 40, 90);
     }
 
     [Fact]
@@ -196,7 +196,7 @@ public class TaxiwaySignPlannerTests
             .Airport;
 
         var eastbound = Assert.Single(TaxiwaySignPlanner.Plan(airport).Signs, s => s.Label == "d[<B]l[A]");
-        AssertAt(eastbound, -30, 16, 90);
+        AssertAt(eastbound, -30, 16, 180);
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public class TaxiwaySignPlannerTests
 
         Assert.Equal("d[C']", sign.Label);
         // Eastbound landing, exit on the right: 60 m before the exit, 6 m off the runway edge.
-        AssertAt(sign, 140, -28.5, 90);
+        AssertAt(sign, 140, -28.5, 0); // travel 90, Right: -90
         Assert.Equal(TaxiwaySignJustification.Right, sign.Justification);
         Assert.Equal(2, sign.AnchorPointIndex);
     }
@@ -247,12 +247,12 @@ public class TaxiwaySignPlannerTests
 
         var signs = TaxiwaySignPlanner.Plan(airport).Signs;
 
-        var eastbound = Assert.Single(signs, s => s.HeadingDeg == 90);
+        var eastbound = Assert.Single(signs, s => s.Justification == TaxiwaySignJustification.Left);
         Assert.Equal("d[<D]", eastbound.Label);
-        AssertAt(eastbound, 140, 28.5, 90);
-        var westbound = Assert.Single(signs, s => s.HeadingDeg == 270);
+        AssertAt(eastbound, 140, 28.5, 180);
+        var westbound = Assert.Single(signs, s => s.Justification == TaxiwaySignJustification.Right);
         Assert.Equal("d[D>]", westbound.Label);
-        AssertAt(westbound, 260, 28.5, 270);
+        AssertAt(westbound, 260, 28.5, 180);
     }
 
     // ---- Restricting and merging ----------------------------------------
@@ -308,12 +308,12 @@ public class TaxiwaySignPlannerTests
     // ---- Manual sign suggestion -----------------------------------------
 
     [Fact]
-    public void SuggestLocationSign_NearestNamedPath_HeadingAlongIt()
+    public void SuggestLocationSign_NearestNamedPath_FacingTrafficAlongIt()
     {
         var suggestion = TaxiwaySignPlanner.SuggestLocationSign(TJunctionAirport(), 5, 150);
 
         Assert.Equal("l[B]", suggestion?.Label);
-        Assert.Equal(0, suggestion!.Value.HeadingDeg, 1);
+        Assert.Equal(90, suggestion!.Value.HeadingDeg, 1); // northbound travel, Left: +90
     }
 
     [Fact]
