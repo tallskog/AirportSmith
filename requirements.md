@@ -3440,6 +3440,8 @@ the Scenery Editor shows.
   same size on screen as you zoom. Clicking one (Ctrl+click for several)
   selects it and filters the grid. **Delete** removes the selected signs
   after a confirmation. **Hide All from Diagram** hides them (display only).
+  *(Superseded 2026-11-03: per-sign Hide checkboxes plus Hide All / Show All
+  buttons — see "hide taxi paths by name" below.)*
 - The Airport Data tab lists every sign's fields.
 
 **Acceptance criteria — automatic placement** (following FAA AIM 2-3;
@@ -3512,3 +3514,123 @@ file changes, and v3 files are loaded as they are.
   `bglcomp.xsd` (0 errors).
 - Manual: diagram rendering, and how signs look and face in the sim after a
   Scenery Editor import.
+
+## New feature: hide taxi paths by name, and alphabetical Taxi Names (2026-11-03)
+
+**User stories:**
+- As a user editing a busy airport, I want to hide every taxi path with a
+  given name from the diagram straight from the Taxi Names panel, one name at
+  a time or all at once, so I can focus on the taxiways I'm working on.
+- As a user, I want the Taxi Names list always in alphabetical order, so I
+  can find a name quickly.
+
+**Acceptance criteria:**
+- Each Taxi Names row has a **Hide** checkbox. Ticking it hides every taxi
+  path using that name from the diagram; unticking shows them again.
+- **Hide All** / **Show All** buttons next to Add Name tick/untick every
+  name at once. Each is disabled when it would change nothing.
+- A path is hidden if its own "Hide from Diagram" (Taxi Paths grid) OR its
+  name's Hide is set; the two are independent and neither changes the other.
+  A path with no name at all isn't affected by any name's Hide.
+- Changing a path's name to a hidden name hides it; to a visible one shows it
+  (unless its own toggle hides it). Hiding clears the selection of the
+  hidden paths, same as the per-path toggle.
+- Display only: never saved, never exported, never changes `AirportDetails`.
+  Kept across in-place structural edits on the same airport (e.g. deleting a
+  parking spot); reset whenever an airport/project is loaded, including the
+  same project again.
+- The Taxi Names list (and every Name picker, which shares it) is sorted
+  alphabetically, case-insensitive, with numbers compared by value ("A2"
+  before "A10"); the blank "(no name)" entry comes first.
+- A rename is sorted into place when its Name box loses focus, not while
+  typing. **Add Name** still appends the new blank row at the bottom (where
+  the cursor is put); it's sorted once named. Names added by **Apply
+  Accepted** (OSM suggestions) are sorted in immediately.
+- Sorting only moves rows (no remove/reset), so the Taxi Paths grid's Name
+  pickers never lose their selection (see the `SyncTaxiNames` regression in
+  "Delete parking spot(s)"). `SyncTaxiNames` now compares the name Ids as a
+  set, so the sorted order doesn't count as a change and trigger a rebuild.
+- Only the view-side list is sorted: `AirportDetails.TaxiNames` keeps its
+  order, so saved projects and exported XML are unchanged.
+
+**Taxiway signs (same day, follow-up request):**
+- As a user, I want to hide taxiway signs the same way: one by one, all at
+  once, and along with a taxi name I've hidden.
+- The Taxiway Signs grid gets a **Hide** checkbox per row, and its old
+  "Hide All from Diagram" checkbox is replaced by **Hide All** / **Show
+  All** buttons that tick/untick every row (each disabled when it would
+  change nothing).
+- A sign is also hidden while any taxiway name it shows is hidden in the
+  Taxi Names panel (e.g. hiding A hides `l[A]` and `d[B<]l[A]d[C>]`). Names
+  are read from the label's location, direction, information and unknown
+  parts (`TaxiwaySignLabel.TaxiNamesShown`), matched against the hidden
+  names as sign text (`SanitizeName`: upper-case, space as `_`). Mandatory
+  and runway parts (`m[09-27]`, `m[ILS]`) never count, so a runway-only sign
+  is never hidden by a name.
+- Show All only unticks the signs' own Hide; signs of a hidden taxi name stay
+  hidden. Editing a label, renaming a hidden name or deleting it updates
+  which signs are hidden right away.
+- Hiding a sign clears its diagram selection; the grid still lists it so it
+  can be unhidden. Hiding isn't an edit: an Auto sign stays Auto.
+- A sign's Hide is kept when other signs are added, deleted or auto-placed,
+  and across in-place structural edits on the same airport.
+- Display only: never saved or exported.
+
+**Backwards compatibility:** no persisted data changes — the Hide states are
+workspace-only and the sort doesn't touch `AirportDetails.TaxiNames`.
+
+**Test coverage:**
+- `NaturalStringComparerTests`: natural/case-insensitive order, blank first,
+  leading zeros, digit runs longer than a `long`, null, deterministic order
+  for names differing only in case.
+- `MainViewModelTaxiNameTests`: names sorted on load (and the picker too)
+  with the airport's own list untouched; a rename sorted only by
+  `SortTaxiNames`, using only Move notifications; Add Name sorting pending
+  renames and appending at the bottom; hiding/showing a name's paths;
+  per-path toggle kept when a name is shown; selection cleared on hide;
+  renaming a path to/from a hidden name; Hide All/Show All and their enabled
+  state; an in-place parking delete keeps names sorted, hidden, and not
+  rebuilt.
+- `MainViewModelTests.ApplyTaxiNameSuggestions_KeepsTheTaxiNamesListAlphabetical`.
+- `TaxiwaySignLabelTests.TaxiNamesShown_ListsTheTaxiwayNamesOnASign`:
+  location/direction/information names, arrays, mandatory/runway parts
+  ignored, arrows and borders splitting names, a half-typed label.
+- `MainViewModelTaxiwaySignTests`: Hide All/Show All and their enabled
+  state (replaces the old Hide All checkbox test); hiding one sign keeps it
+  Auto; a hidden taxi name hides its signs incl. arrays but not runway-only
+  signs; Taxi Names Hide All; Show All keeping hidden-name signs hidden;
+  label edit / rename / delete of a hidden name; Hide kept when signs are
+  added and deleted.
+- Manual: the Hide columns/buttons in the Taxi Names panel and Taxiway Signs
+  grid, and the re-sort when leaving a renamed Name box.
+
+## Bug fix: renaming a taxi name after reloading the same project was lost (2026-11-03)
+
+**Found** while adding the Hide feature above (pre-existing, confirmed with a
+throwaway test against the real project store): Load Project, then Load
+Project again for the same ICAO, then rename a taxi name. The grid and
+diagram showed the new name, but `Airport.TaxiNames` kept the old one, so
+Save Project and Export Airport XML wrote the old name.
+
+**Cause:** `SyncTaxiNames` skipped rebuilding the Taxi Names rows when the
+name *Ids* matched. A reload deserializes new `TaxiName` objects with the
+same Ids, so the old rows were kept, still wrapping the previous load's
+objects, which are no longer part of `Airport`.
+
+**Fix / acceptance criteria:**
+- `SyncTaxiNames` skips the rebuild only when the rows wrap the very same
+  `TaxiName` objects as the airport (reference equality, any order). An
+  in-place `SetAirport(Airport)` (e.g. deleting a parking spot) still skips
+  it, so the parking-delete regression above stays fixed.
+- Any load, including the same project again, rebuilds the rows (sorted) and
+  resets the names' Hide. Taxiway signs' Hide follows the same rule: kept
+  for the same sign object (adding/deleting/auto-placing signs, in-place
+  edits), reset on a load.
+
+**Test coverage:**
+- `MainViewModelTaxiNameTests.ReloadingTheSameProject_RenameStillReachesTheAirport`
+  (fresh same-Id copy put back into the fake store, no disk I/O).
+- `MainViewModelTests.DeleteSelectedParkingSpots_DoesNotRebuildUnchangedTaxiNames`
+  and `MainViewModelTaxiNameTests.InPlaceStructuralEdit_KeepsNamesSortedAndHidden_WithoutRebuildingThem`
+  still pass unchanged.
+- `MainViewModelTaxiwaySignTests.AutoPlacement_KeepsAHiddenManualSignHidden`.

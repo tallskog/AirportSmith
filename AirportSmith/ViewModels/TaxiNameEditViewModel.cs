@@ -47,4 +47,15 @@ public class TaxiNameEditViewModel : ViewModelBase
     public string DisplayValue => IsUnnamed ? "(no name)" : Value;
 
     public bool IsUnnamed => string.IsNullOrEmpty(Value);
+
+    // Hides every taxi path using this name from the diagram, on top of each
+    // path's own TaxiPathEditViewModel.IsHiddenFromDiagram (a path is hidden
+    // if either says so). Same workspace-only convenience as that one: not
+    // written to TaxiName, never persisted by Save Project.
+    private bool _isHiddenFromDiagram;
+    public bool IsHiddenFromDiagram
+    {
+        get => _isHiddenFromDiagram;
+        set => SetField(ref _isHiddenFromDiagram, value);
+    }
 }

@@ -246,9 +246,25 @@
                                                     <TextBlock Text="(no name)" FontStyle="Italic" Foreground="Gray" VerticalAlignment="Center"
                                                                IsHitTestVisible="False"
                                                                Visibility="{Binding IsUnnamed, Converter={StaticResource BoolToVisibility}}"/>
+                                                    <!-- LostKeyboardFocus re-sorts the list once a rename is
+                                                         done — see MainViewModel.SortTaxiNames. -->
                                                     <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                                             LostKeyboardFocus="TaxiNameTextBox_LostKeyboardFocus"
                                                              Background="Transparent" BorderThickness="0" VerticalContentAlignment="Center"/>
                                                 </Grid>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <!-- Hides every taxi path using this name from the diagram
+                                         (TaxiNameEditViewModel.IsHiddenFromDiagram). A real CheckBox
+                                         in the CellTemplate so it toggles on the first click — same
+                                         reason as the Taxi Paths grid's Hide from Diagram column. -->
+                                    <DataGridTemplateColumn Header="Hide" Width="40">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          ToolTip="Hide the taxi paths with this name from the diagram"
+                                                          IsChecked="{Binding IsHiddenFromDiagram, UpdateSourceTrigger=PropertyChanged}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
@@ -266,6 +282,12 @@
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                                 <Button Content="Add Name" Padding="10,2"
                                         Command="{Binding DataContext.AddTaxiNameCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <Button Content="Hide All" Margin="10,0,0,0" Padding="10,2"
+                                        ToolTip="Hide the taxi paths of every name from the diagram"
+                                        Command="{Binding DataContext.HideAllTaxiNamesCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <Button Content="Show All" Margin="6,0,0,0" Padding="10,2"
+                                        ToolTip="Show the taxi paths of every name on the diagram again"
+                                        Command="{Binding DataContext.ShowAllTaxiNamesCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                 <!-- One Overpass request per click, never automatic — see
                                      MainViewModel.SuggestTaxiNamesFromOsmAsync/TaxiwayNameSuggester. -->
                                 <Button Content="Suggest Names from OSM" Margin="10,0,0,0" Padding="10,2"
@@ -739,8 +761,14 @@
                                  selected taxiway points (MainViewModel.RunTaxiwaySignPlanner). -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <TextBlock Text="Taxiway Signs" FontWeight="Bold" VerticalAlignment="Center"/>
-                                <CheckBox Content="Hide All from Diagram" Margin="12,0,0,0" VerticalAlignment="Center"
-                                          IsChecked="{Binding DataContext.HideAllTaxiwaySigns, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                                <!-- Tick every row's Hide at once (MainViewModel.SetAllTaxiwaySignsHidden).
+                                     Signs also hide with a taxi name hidden in the Taxi Names panel. -->
+                                <Button Content="Hide All" Margin="12,0,0,0" Padding="8,1" VerticalAlignment="Center"
+                                        ToolTip="Hide every taxiway sign from the diagram"
+                                        Command="{Binding DataContext.HideAllTaxiwaySignsCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                <Button Content="Show All" Margin="6,0,0,0" Padding="8,1" VerticalAlignment="Center"
+                                        ToolTip="Untick Hide on every taxiway sign. Signs showing a taxi name hidden in the Taxi Names panel stay hidden."
+                                        Command="{Binding DataContext.ShowAllTaxiwaySignsCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
                             </StackPanel>
                             <WrapPanel Margin="0,0,0,4">
                                 <Button Content="Add Sign" Padding="8,1" Margin="0,0,6,2"
@@ -770,6 +798,17 @@
                             <DataGrid Margin="0,0,0,14" MaxHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                                       ItemsSource="{Binding DataContext.VisibleTaxiwaySignEdits, RelativeSource={RelativeSource AncestorType=Window}}">
                                 <DataGrid.Columns>
+                                    <!-- Real CheckBox in the CellTemplate so it toggles on the first
+                                         click, same as the Taxi Paths grid's Hide from Diagram. -->
+                                    <DataGridTemplateColumn Header="Hide" Width="40">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          ToolTip="Hide this sign from the diagram"
+                                                          IsChecked="{Binding IsHiddenFromDiagram, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridCheckBoxColumn Header="Auto" Width="40" IsReadOnly="True" Binding="{Binding IsAutoPlaced, Mode=OneWay}"/>
                                     <DataGridTemplateColumn Header="Label" Width="140">
                                         <DataGridTemplateColumn.CellTemplate>

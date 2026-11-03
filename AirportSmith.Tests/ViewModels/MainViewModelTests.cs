@@ -620,6 +620,21 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void ApplyTaxiNameSuggestions_KeepsTheTaxiNamesListAlphabetical()
+    {
+        var (vm, _) = CreateViewModelForOsmSuggestions(out _);
+        vm.SuggestTaxiNamesFromOsmCommand.Execute(null);
+        vm.TaxiNameSuggestions[1].IsAccepted = true;
+
+        vm.ApplyTaxiNameSuggestionsCommand.Execute(null);
+
+        var names = vm.TaxiNames.Select(n => n.Value).ToList();
+        Assert.Equal(names.Order(AirportSmith.Helpers.NaturalStringComparer.Instance), names);
+        Assert.Contains("A", names);
+        Assert.Contains("B", names);
+    }
+
+    [Fact]
     public void ApplyTaxiNameSuggestions_UpdatesTheDiagramLabelImmediately()
     {
         var (vm, _) = CreateViewModelForOsmSuggestions(out _);

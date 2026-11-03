@@ -33,23 +33,49 @@ public partial class MainViewModel
         private set => SetField(ref _visibleTaxiwaySignEdits, value);
     }
 
-    // Display-only, never saved — same as HideAllParkingSpots.
-    private bool _hideAllTaxiwaySigns;
-    public bool HideAllTaxiwaySigns
-    {
-        get => _hideAllTaxiwaySigns;
-        set
-        {
-            if (!SetField(ref _hideAllTaxiwaySigns, value)) return;
-            if (Diagram is null) return;
+    // The Taxiway Signs grid's Hide All / Show All buttons — flip every
+    // sign's own TaxiwaySignEditViewModel.IsHiddenFromDiagram at once.
+    // Display-only, never saved.
+    public RelayCommand HideAllTaxiwaySignsCommand { get; private set; } = null!;
+    public RelayCommand ShowAllTaxiwaySignsCommand { get; private set; } = null!;
 
-            foreach (var shape in Diagram.TaxiwaySigns)
-            {
-                shape.IsVisible = !value;
-                if (value) shape.IsSelected = false;
-            }
-            RefreshTaxiwaySignFilter();
+    // Called from the constructor (this partial's commands live here).
+    private void CreateTaxiwaySignVisibilityCommands()
+    {
+        HideAllTaxiwaySignsCommand = new RelayCommand(() => SetAllTaxiwaySignsHidden(true), () => TaxiwaySignEdits.Any(e => !e.IsHiddenFromDiagram));
+        ShowAllTaxiwaySignsCommand = new RelayCommand(() => SetAllTaxiwaySignsHidden(false), () => TaxiwaySignEdits.Any(e => e.IsHiddenFromDiagram));
+    }
+
+    private void SetAllTaxiwaySignsHidden(bool hidden)
+    {
+        foreach (var edit in TaxiwaySignEdits)
+            edit.IsHiddenFromDiagram = hidden;
+    }
+
+    // A sign is hidden if its own Hide is ticked, or if any taxiway name it
+    // shows (TaxiwaySignLabel.TaxiNamesShown) belongs to a taxi name hidden in
+    // the Taxi Names panel. Hiding clears the sign's selection, same as the
+    // taxi path toggles.
+    private void RefreshAllTaxiwaySignVisibility()
+    {
+        if (Diagram is null) return;
+
+        var hiddenNames = TaxiNames
+            .Where(n => n.IsHiddenFromDiagram)
+            .Select(n => TaxiwaySignLabel.SanitizeName(n.Value))
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var editsById = TaxiwaySignEdits.ToDictionary(e => e.Sign.Id);
+
+        foreach (var shape in Diagram.TaxiwaySigns)
+        {
+            if (!editsById.TryGetValue(shape.SignId, out var edit)) continue;
+            var hidden = edit.IsHiddenFromDiagram
+                || (hiddenNames.Count > 0 && TaxiwaySignLabel.TaxiNamesShown(edit.Sign.Label).Overlaps(hiddenNames));
+            shape.IsVisible = !hidden;
+            if (hidden) shape.IsSelected = false;
         }
+        RefreshTaxiwaySignFilter();
     }
 
     // Click-to-place for signs: either a new sign (Add Sign) or an existing
@@ -93,13 +119,11 @@ public partial class MainViewModel
 
     // Called from SetAirport: a fresh wrapper/shape set for the new airport,
     // with every sign-related session state reset.
+    // A sign's Hide survives an in-place SetAirport(Airport) on the same
+    // airport (same sign object), same as a taxi name's; it's dropped when an
+    // airport or project is loaded, even the same one again (new objects).
     private void ResetTaxiwaySignsForNewAirport()
     {
-        if (_hideAllTaxiwaySigns)
-        {
-            _hideAllTaxiwaySigns = false;
-            OnPropertyChanged(nameof(HideAllTaxiwaySigns));
-        }
         DisarmTaxiwaySignPlacement();
         TaxiwaySignStatus = null;
         TaxiwaySignWarnings = [];
@@ -109,16 +133,17 @@ public partial class MainViewModel
     // Brings TaxiwaySignEdits and Diagram.TaxiwaySigns back in line with
     // Airport.TaxiwaySigns after signs were added/removed, without
     // re-projecting the diagram. Surviving signs keep their shape (and so
-    // their selection/visibility). The Airport Data tree is rebuilt too so a
+    // their selection) and their Hide. The Airport Data tree is rebuilt too so a
     // new sign shows there right away (SetAirport builds it itself, hence
     // refreshDataTree: false from there).
     private void RebuildTaxiwaySigns(bool refreshDataTree = true)
     {
         foreach (var edit in TaxiwaySignEdits)
             edit.PropertyChanged -= OnTaxiwaySignEditChanged;
+        var hidden = TaxiwaySignEdits.Where(e => e.IsHiddenFromDiagram).Select(e => e.Sign).ToHashSet(ReferenceEqualityComparer.Instance);
 
         var signs = Airport?.TaxiwaySigns ?? [];
-        TaxiwaySignEdits = signs.Select(s => new TaxiwaySignEditViewModel(s)).ToList();
+        TaxiwaySignEdits = signs.Select(s => new TaxiwaySignEditViewModel(s) { IsHiddenFromDiagram = hidden.Contains(s) }).ToList();
         foreach (var edit in TaxiwaySignEdits)
             edit.PropertyChanged += OnTaxiwaySignEditChanged;
 
@@ -131,19 +156,26 @@ public partial class MainViewModel
             foreach (var sign in signs)
             {
                 if (shapesById.ContainsKey(sign.Id)) continue;
-                var shape = AirportDiagramProjector.BuildTaxiwaySignShape(Diagram, sign);
-                shape.IsVisible = !_hideAllTaxiwaySigns;
-                Diagram.TaxiwaySigns.Add(shape);
+                Diagram.TaxiwaySigns.Add(AirportDiagramProjector.BuildTaxiwaySignShape(Diagram, sign));
             }
         }
 
         if (refreshDataTree && Airport != null) AirportDataTree = AirportDataTreeBuilder.Build(Airport);
-        RefreshTaxiwaySignFilter();
+        // Also refreshes the grid filter.
+        RefreshAllTaxiwaySignVisibility();
     }
 
     private void OnTaxiwaySignEditChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not TaxiwaySignEditViewModel edit || Diagram is null) return;
+        // Hide, or a label edit that may add/drop a hidden taxi name.
+        if (e.PropertyName is nameof(TaxiwaySignEditViewModel.IsHiddenFromDiagram) or nameof(TaxiwaySignEditViewModel.Label))
+            RefreshAllTaxiwaySignVisibility();
+        if (e.PropertyName == nameof(TaxiwaySignEditViewModel.IsHiddenFromDiagram))
+        {
+            HideAllTaxiwaySignsCommand.RaiseCanExecuteChanged();
+            return;
+        }
         if (e.PropertyName is nameof(TaxiwaySignEditViewModel.Size) or nameof(TaxiwaySignEditViewModel.Justification)
             or nameof(TaxiwaySignEditViewModel.IsAutoPlaced)) return;
 

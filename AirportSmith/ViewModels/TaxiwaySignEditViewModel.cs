@@ -71,6 +71,17 @@ public class TaxiwaySignEditViewModel : ViewModelBase
         set { if (Sign.ZMeters == value) return; Sign.ZMeters = value; Touched(); }
     }
 
+    // Hides this sign from the diagram. Display-only, never saved, and not an
+    // edit: unlike the setters above it doesn't clear IsAutoPlaced. The sign
+    // is also hidden while a taxi name on it is hidden in the Taxi Names
+    // panel (MainViewModel.RefreshAllTaxiwaySignVisibility).
+    private bool _isHiddenFromDiagram;
+    public bool IsHiddenFromDiagram
+    {
+        get => _isHiddenFromDiagram;
+        set => SetField(ref _isHiddenFromDiagram, value);
+    }
+
     // Moves the sign in one step (diagram click-to-place), raising one
     // change per axis like two grid edits would.
     public void MoveTo(double xMeters, double zMeters)

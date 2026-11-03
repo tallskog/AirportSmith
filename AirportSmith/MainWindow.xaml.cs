@@ -37,6 +37,20 @@ public partial class MainWindow : Window
         textBox.SelectAll();
     }
 
+    // A rename is done once its Name box loses focus — only then re-sort, so
+    // the row doesn't jump away mid-typing. Deferred so the click that moved
+    // focus (e.g. on another row's Delete button) lands before rows move, and
+    // after committing any DataGrid edit, since reordering the source during
+    // an edit transaction isn't safe (see MainViewModel.TaxiNamesPicker).
+    private void TaxiNameTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            TaxiNamesGrid.CommitEdit(DataGridEditingUnit.Row, true);
+            _viewModel.SortTaxiNames();
+        }, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
     private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
     {
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)

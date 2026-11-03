@@ -94,4 +94,21 @@ public class TaxiwaySignLabelTests
     {
         Assert.Equal(expected, TaxiwaySignLabel.SanitizeName(name));
     }
+
+    [Theory]
+    [InlineData("l[A]", "A")]
+    [InlineData("d[B<]l[A]d[C>]", "A,B,C")]
+    [InlineData("l[A]m[09-27]", "A")]          // runway designator in the mandatory part isn't a taxi name
+    [InlineData("m[ILS]", "")]
+    [InlineData("r[09]", "")]
+    [InlineData("d[A1^]|[B_2v]", "A1,B_2")]    // arrows/borders split names; '_' is a space in a name
+    [InlineData("i[TWY_K']", "TWY_K")]
+    [InlineData("l[A]d", "A")]                 // half-typed (invalid) label: as far as it parses
+    [InlineData("", "")]
+    public void TaxiNamesShown_ListsTheTaxiwayNamesOnASign(string label, string expected)
+    {
+        var names = TaxiwaySignLabel.TaxiNamesShown(label).Order(StringComparer.Ordinal);
+
+        Assert.Equal(expected, string.Join(",", names));
+    }
 }

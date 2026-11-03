@@ -88,6 +88,35 @@ public static class TaxiwaySignLabel
         return sb.Length > 0 ? sb.ToString() : null;
     }
 
+    // The taxiway names a sign shows, as SanitizeName-style tokens: the text
+    // of its location, direction, information and unknown segments split on
+    // arrows/borders (e.g. "d[B<]l[A]d[C>]" -> B, A, C). Mandatory and runway
+    // segments are left out — they hold runway designators and ILS/no-entry
+    // text, not taxiway names. Used to hide a sign along with a taxi name
+    // hidden in the Taxi Names panel. Works on an invalid label too (as far as
+    // it parses), so a half-typed label still follows its name.
+    public static IReadOnlySet<string> TaxiNamesShown(string? label)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var segment in Parse(label).Segments)
+        {
+            if (segment.Kind is TaxiwaySignSegmentKind.Mandatory or TaxiwaySignSegmentKind.Runway) continue;
+
+            var token = new StringBuilder();
+            foreach (var c in segment.Content + " ")
+            {
+                if (c is >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-')
+                {
+                    token.Append(c);
+                    continue;
+                }
+                if (token.Length > 0) names.Add(token.ToString());
+                token.Clear();
+            }
+        }
+        return names;
+    }
+
     public static char TypeLetter(TaxiwaySignSegmentKind kind) => kind switch
     {
         TaxiwaySignSegmentKind.Location => 'l',

@@ -468,6 +468,10 @@ public partial class MainViewModel : ViewModelBase
     public RelayCommand DismissXmlExportWarningsCommand { get; }
     public RelayCommand AddTaxiNameCommand { get; }
     public RelayCommand<TaxiNameEditViewModel> DeleteTaxiNameCommand { get; }
+    // The Taxi Names panel's Hide All / Show All buttons — flip every name's
+    // TaxiNameEditViewModel.IsHiddenFromDiagram at once.
+    public RelayCommand HideAllTaxiNamesCommand { get; }
+    public RelayCommand ShowAllTaxiNamesCommand { get; }
     public AsyncRelayCommand SuggestTaxiNamesFromOsmCommand { get; }
     public RelayCommand ApplyTaxiNameSuggestionsCommand { get; }
     public RelayCommand DismissTaxiNameSuggestionsCommand { get; }
@@ -613,6 +617,8 @@ public partial class MainViewModel : ViewModelBase
         DismissXmlExportWarningsCommand = new RelayCommand(DismissXmlExportWarnings, () => ShowXmlExportWarnings);
         AddTaxiNameCommand = new RelayCommand(AddTaxiName, () => Airport != null);
         DeleteTaxiNameCommand = new RelayCommand<TaxiNameEditViewModel>(DeleteTaxiName, name => name != null);
+        HideAllTaxiNamesCommand = new RelayCommand(() => SetAllTaxiNamesHidden(true), () => TaxiNames.Any(n => !n.IsHiddenFromDiagram));
+        ShowAllTaxiNamesCommand = new RelayCommand(() => SetAllTaxiNamesHidden(false), () => TaxiNames.Any(n => n.IsHiddenFromDiagram));
         SuggestTaxiNamesFromOsmCommand = new AsyncRelayCommand(SuggestTaxiNamesFromOsmAsync, () => _osmTaxiwaySource != null && Airport != null);
         ApplyTaxiNameSuggestionsCommand = new RelayCommand(ApplyTaxiNameSuggestions, () => TaxiNameSuggestions.Any(s => s.IsAccepted));
         DismissTaxiNameSuggestionsCommand = new RelayCommand(DismissTaxiNameSuggestions);
@@ -642,6 +648,7 @@ public partial class MainViewModel : ViewModelBase
         AutoPlaceTaxiwaySignsCommand = new RelayCommand(AutoPlaceTaxiwaySigns, () => Airport != null);
         GenerateTaxiwaySignsForSelectedPointsCommand = new RelayCommand(GenerateTaxiwaySignsForSelectedPoints, () => Airport != null && SelectedTaxiwayPointIndices().Count > 0);
         DeleteSelectedTaxiwaySignsCommand = new RelayCommand(DeleteSelectedTaxiwaySigns, HasTaxiwaySignSelection);
+        CreateTaxiwaySignVisibilityCommands();
         DeleteSelectedCommand = new RelayCommand(DeleteSelected, () =>
             DeleteSelectedParkingSpotsCommand.CanExecute(null) ||
             DeleteSelectedTaxiwaySignsCommand.CanExecute(null) ||
@@ -723,6 +730,10 @@ public partial class MainViewModel : ViewModelBase
         SubscribeTaxiNames();
         SubscribeRunwayEdits();
         SubscribeParkingSpotEdits();
+        // Diagram was just re-projected (all shapes visible), but a name hidden
+        // in the Taxi Names panel survives an in-place SetAirport(Airport)
+        // when SyncTaxiNames keeps the same name objects — reapply it.
+        RefreshAllTaxiwayVisibility();
         RefreshTaxiwaySelectionState();
         ResetTaxiwaySignsForNewAirport();
         // A new airport starts with every Taxi Paths column filter cleared —
@@ -771,15 +782,49 @@ public partial class MainViewModel : ViewModelBase
     // Scenery Editor. Skipping the rebuild when nothing changed avoids the
     // whole failure mode rather than trying to out-race WPF's own
     // virtualization/selection timing.
+    //
+    // Compared as a SET, not a sequence: TaxiNames is kept in alphabetical
+    // order (SortTaxiNames), not airport.TaxiNames' own order, so a sequence
+    // comparison would almost never match and always rebuild.
+    //
+    // And by the TaxiName OBJECTS themselves, not their Ids: reloading the same
+    // project deserializes new TaxiName objects with the same Ids. Comparing
+    // Ids kept the old rows, still wrapping the previous load's objects, so a
+    // rename afterwards changed the screen but never reached Airport — Save
+    // Project/Export wrote the old name. The in-place case above (same
+    // airport, same objects) still skips the rebuild.
     private void SyncTaxiNames(AirportDetails? airport)
     {
         var airportNames = airport?.TaxiNames ?? [];
-        if (airportNames.Count == TaxiNames.Count && airportNames.Select(n => n.Id).SequenceEqual(TaxiNames.Select(vm => vm.Id)))
+        if (airportNames.Count == TaxiNames.Count
+            && TaxiNames.Select(vm => vm.Model).ToHashSet(ReferenceEqualityComparer.Instance).SetEquals(airportNames))
             return;
 
         TaxiNames.Clear();
         foreach (var name in airportNames)
             TaxiNames.Add(new TaxiNameEditViewModel(name));
+        SortTaxiNames();
+    }
+
+    // Puts TaxiNames (and so the Taxi Names panel and every Name picker) in
+    // alphabetical order — natural order, so "A2" comes before "A10"; the
+    // blank "(no name)" entry sorts first. Moves rows in place rather than
+    // rebuilding the collection (see SyncTaxiNames for why a rebuild is
+    // dangerous). Only this view-side list is reordered; Airport.TaxiNames
+    // keeps its own order, so saving/exporting is unaffected.
+    //
+    // Not re-run on every keystroke of a rename (the row would jump away
+    // while being typed in): the view calls this once the rename is done
+    // (the Name box losing focus), and Add/Apply-suggestions call it too.
+    public void SortTaxiNames()
+    {
+        var sorted = TaxiNames.OrderBy(n => n.Value, NaturalStringComparer.Instance).ToList();
+        for (var target = 0; target < sorted.Count; target++)
+        {
+            var current = TaxiNames.IndexOf(sorted[target]);
+            if (current != target)
+                TaxiNames.Move(current, target);
+        }
     }
 
     private void SubscribeParkingSpotEdits()
@@ -1276,6 +1321,8 @@ public partial class MainViewModel : ViewModelBase
             case nameof(TaxiPathEditViewModel.TaxiNameId):
                 RefreshAllTaxiwayLabels();
                 RefreshSuggestionCurrentNames();
+                // The new name may be one that's hidden in the Taxi Names panel.
+                RefreshAllTaxiwayVisibility();
                 break;
             case nameof(TaxiPathEditViewModel.IsHiddenFromDiagram):
                 RefreshAllTaxiwayVisibility();
@@ -1296,7 +1343,17 @@ public partial class MainViewModel : ViewModelBase
     // not just whichever path happened to trigger the change.
     private void OnTaxiNameEditChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(TaxiNameEditViewModel.IsHiddenFromDiagram))
+        {
+            RefreshAllTaxiwayVisibility();
+            RefreshAllTaxiwaySignVisibility();
+            HideAllTaxiNamesCommand.RaiseCanExecuteChanged();
+            return;
+        }
         if (e.PropertyName != nameof(TaxiNameEditViewModel.Value)) return;
+
+        // Renaming a hidden name changes which signs show it.
+        RefreshAllTaxiwaySignVisibility();
 
         RefreshAllTaxiwayLabels();
         RefreshSuggestionCurrentNames();
@@ -1535,7 +1592,8 @@ public partial class MainViewModel : ViewModelBase
         foreach (var shape in Diagram.TaxiwaySegments)
         {
             if (shape.SourceIndex >= TaxiPathEdits.Count) continue;
-            var hidden = TaxiPathEdits[shape.SourceIndex].IsHiddenFromDiagram;
+            var edit = TaxiPathEdits[shape.SourceIndex];
+            var hidden = edit.IsHiddenFromDiagram || IsTaxiNameHidden(edit.TaxiNameId);
             shape.IsVisible = !hidden;
             // A hidden shape has nothing visible to highlight, and would
             // otherwise linger as a phantom in the selection count/popover.
@@ -1543,10 +1601,27 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    // Whether the path's name is hidden via the Taxi Names panel. A path with
+    // no TaxiNameId at all isn't affected by any name's toggle.
+    private bool IsTaxiNameHidden(Guid? taxiNameId) =>
+        taxiNameId is { } id && TaxiNames.FirstOrDefault(n => n.Id == id)?.IsHiddenFromDiagram == true;
+
+    // Each name's own PropertyChanged (OnTaxiNameEditChanged) refreshes the
+    // diagram, so this is just the loop.
+    private void SetAllTaxiNamesHidden(bool hidden)
+    {
+        foreach (var name in TaxiNames)
+            name.IsHiddenFromDiagram = hidden;
+    }
+
     private void AddTaxiName()
     {
         if (Airport is null) return;
 
+        // Settles any rename still waiting to be sorted (see SortTaxiNames)
+        // before the new blank row is appended at the bottom, where the user
+        // is about to type its name; it's sorted into place once that's done.
+        SortTaxiNames();
         var name = new TaxiName();
         Airport.TaxiNames.Add(name);
         var nameEdit = new TaxiNameEditViewModel(name);
@@ -1567,6 +1642,9 @@ public partial class MainViewModel : ViewModelBase
         // exists.
         foreach (var edit in TaxiPathEdits)
             edit.ClearTaxiNameIfReferencing(name.Id);
+
+        // A deleted name can't hide signs any more.
+        if (name.IsHiddenFromDiagram) RefreshAllTaxiwaySignVisibility();
     }
 
     // Suggestions only need to cover the airport's own taxi network: the
@@ -1662,6 +1740,7 @@ public partial class MainViewModel : ViewModelBase
             suggestion.UpdateCurrentName(nameEdit.Value);
             applied++;
         }
+        SortTaxiNames();
 
         OsmNameSuggestionStatus = $"{_osmSuggestionSummary} Applied {applied} name(s).";
         ApplyTaxiNameSuggestionsCommand.RaiseCanExecuteChanged();

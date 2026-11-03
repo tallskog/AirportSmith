@@ -215,10 +215,154 @@ public class MainViewModelTaxiwaySignTests
         vm.AutoPlaceTaxiwaySignsCommand.Execute(null);
         vm.ToggleTaxiwaySignSelectionCommand.Execute(new TaxiwaySignSelectionRequest(vm.Diagram!.TaxiwaySigns[0], false));
 
-        vm.HideAllTaxiwaySigns = true;
+        vm.HideAllTaxiwaySignsCommand.Execute(null);
 
         Assert.All(vm.Diagram.TaxiwaySigns, s => Assert.False(s.IsVisible || s.IsSelected));
         Assert.Equal(vm.TaxiwaySignEdits.Count, vm.VisibleTaxiwaySignEdits.Count);
+        Assert.All(vm.TaxiwaySignEdits, e => Assert.True(e.IsHiddenFromDiagram));
+        Assert.False(vm.HideAllTaxiwaySignsCommand.CanExecute(null));
+        Assert.True(vm.ShowAllTaxiwaySignsCommand.CanExecute(null));
+
+        vm.ShowAllTaxiwaySignsCommand.Execute(null);
+
+        Assert.All(vm.Diagram.TaxiwaySigns, s => Assert.True(s.IsVisible));
+        Assert.False(vm.ShowAllTaxiwaySignsCommand.CanExecute(null));
+    }
+
+    // Signs for this group: l[A] near the taxiway, l[B] and a runway-only
+    // m[09-27] elsewhere, d[B<]l[A]d[C>] showing three names.
+    private static (MainViewModel Vm, Guid A, Guid B, Guid Runway, Guid Array) CreateWithHandMadeSigns()
+    {
+        var airport = Airport();
+        var b = new TaxiName { Value = "B" };
+        airport.TaxiNames.Add(b);
+        var signA = new TaxiwaySign { Label = "l[A]", XMeters = 10, ZMeters = 100 };
+        var signB = new TaxiwaySign { Label = "l[B]", XMeters = 20, ZMeters = 100 };
+        var signRunway = new TaxiwaySign { Label = "m[09-27]", XMeters = 30, ZMeters = 100 };
+        var signArray = new TaxiwaySign { Label = "d[B<]l[A]d[C>]", XMeters = 40, ZMeters = 100 };
+        airport.TaxiwaySigns.AddRange([signA, signB, signRunway, signArray]);
+        var (vm, _) = Create(airport);
+        return (vm, signA.Id, signB.Id, signRunway.Id, signArray.Id);
+    }
+
+    private static bool IsSignVisible(MainViewModel vm, Guid id) => vm.Diagram!.TaxiwaySigns.Single(s => s.SignId == id).IsVisible;
+
+    [Fact]
+    public void HidingOneSign_HidesOnlyThatSign_WithoutMakingItAManualEdit()
+    {
+        var (vm, _) = Create();
+        vm.AutoPlaceTaxiwaySignsCommand.Execute(null);
+        var edit = vm.TaxiwaySignEdits[0];
+
+        edit.IsHiddenFromDiagram = true;
+
+        Assert.False(IsSignVisible(vm, edit.Sign.Id));
+        Assert.All(vm.TaxiwaySignEdits.Skip(1), e => Assert.True(IsSignVisible(vm, e.Sign.Id)));
+        Assert.True(edit.Sign.IsAutoPlaced);
+
+        edit.IsHiddenFromDiagram = false;
+
+        Assert.True(IsSignVisible(vm, edit.Sign.Id));
+    }
+
+    [Fact]
+    public void HidingATaxiName_HidesEverySignShowingIt_IncludingSignArrays()
+    {
+        var (vm, a, b, runway, array) = CreateWithHandMadeSigns();
+
+        vm.TaxiNames.Single(n => n.Value == "A").IsHiddenFromDiagram = true;
+
+        Assert.False(IsSignVisible(vm, a));
+        Assert.False(IsSignVisible(vm, array)); // any of its names hidden
+        Assert.True(IsSignVisible(vm, b));
+        Assert.True(IsSignVisible(vm, runway));
+        Assert.All(vm.TaxiwaySignEdits, e => Assert.False(e.IsHiddenFromDiagram)); // own Hide untouched
+
+        vm.TaxiNames.Single(n => n.Value == "A").IsHiddenFromDiagram = false;
+
+        Assert.True(IsSignVisible(vm, a));
+        Assert.True(IsSignVisible(vm, array));
+    }
+
+    [Fact]
+    public void TaxiNamesHideAll_HidesNamedSigns_ButNotRunwayOnlySigns()
+    {
+        var (vm, a, b, runway, array) = CreateWithHandMadeSigns();
+
+        vm.HideAllTaxiNamesCommand.Execute(null);
+
+        Assert.False(IsSignVisible(vm, a));
+        Assert.False(IsSignVisible(vm, b));
+        Assert.False(IsSignVisible(vm, array));
+        Assert.True(IsSignVisible(vm, runway));
+    }
+
+    [Fact]
+    public void ShowAllSigns_KeepsSignsOfHiddenTaxiNamesHidden()
+    {
+        var (vm, a, b, _, _) = CreateWithHandMadeSigns();
+        vm.HideAllTaxiwaySignsCommand.Execute(null);
+        vm.TaxiNames.Single(n => n.Value == "A").IsHiddenFromDiagram = true;
+
+        vm.ShowAllTaxiwaySignsCommand.Execute(null);
+
+        Assert.False(IsSignVisible(vm, a));
+        Assert.True(IsSignVisible(vm, b));
+    }
+
+    [Fact]
+    public void EditingALabel_OrRenamingAHiddenName_UpdatesWhichSignsAreHidden()
+    {
+        var (vm, a, b, _, _) = CreateWithHandMadeSigns();
+        var nameA = vm.TaxiNames.Single(n => n.Value == "A");
+        nameA.IsHiddenFromDiagram = true;
+
+        vm.TaxiwaySignEdits.Single(e => e.Sign.Id == b).Label = "l[A]";
+        Assert.False(IsSignVisible(vm, b));
+
+        nameA.Value = "Z";
+        Assert.True(IsSignVisible(vm, a));
+        Assert.True(IsSignVisible(vm, b));
+    }
+
+    [Fact]
+    public void AutoPlacement_KeepsAHiddenManualSignHidden()
+    {
+        var (vm, _, b, _, _) = CreateWithHandMadeSigns();
+        vm.TaxiwaySignEdits.Single(e => e.Sign.Id == b).IsHiddenFromDiagram = true;
+
+        vm.AutoPlaceTaxiwaySignsCommand.Execute(null);
+
+        Assert.True(vm.TaxiwaySignEdits.Single(e => e.Sign.Id == b).IsHiddenFromDiagram);
+        Assert.False(IsSignVisible(vm, b));
+    }
+
+    [Fact]
+    public void DeletingAHiddenTaxiName_ShowsItsSignsAgain()
+    {
+        var (vm, a, _, _, _) = CreateWithHandMadeSigns();
+        var nameA = vm.TaxiNames.Single(n => n.Value == "A");
+        nameA.IsHiddenFromDiagram = true;
+
+        vm.DeleteTaxiNameCommand.Execute(nameA);
+
+        Assert.True(IsSignVisible(vm, a));
+    }
+
+    [Fact]
+    public void AddingOrDeletingSigns_KeepsTheOtherSignsHidden()
+    {
+        var (vm, a, b, _, _) = CreateWithHandMadeSigns();
+        vm.TaxiwaySignEdits.Single(e => e.Sign.Id == a).IsHiddenFromDiagram = true;
+        vm.ToggleTaxiwaySignSelectionCommand.Execute(new TaxiwaySignSelectionRequest(vm.Diagram!.TaxiwaySigns.Single(s => s.SignId == b), false));
+
+        vm.DeleteSelectedTaxiwaySignsCommand.Execute(null);
+        vm.AddTaxiwaySignCommand.Execute(null);
+        vm.PlaceTaxiwaySignCommand.Execute(Screen(vm, 5, 150));
+
+        Assert.True(vm.TaxiwaySignEdits.Single(e => e.Sign.Id == a).IsHiddenFromDiagram);
+        Assert.False(IsSignVisible(vm, a));
+        Assert.True(IsSignVisible(vm, vm.TaxiwaySignEdits[^1].Sign.Id)); // the new one
     }
 
     [Fact]
